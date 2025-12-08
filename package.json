@@ -1,0 +1,29 @@
+{
+  "name": "alpha7_ia_superpopular",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UnicoContato/alpha7_ia_superpopular.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/UnicoContato/alpha7_ia_superpopular/issues"
+  },
+  "homepage": "https://github.com/UnicoContato/alpha7_ia_superpopular#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.1",
+    "dotenv": "^17.2.3",
+    "env": "^0.0.2",
+    "express": "^5.2.1",
+    "openai": "^6.10.0",
+    "pg": "^8.16.3"
+  }
+}
