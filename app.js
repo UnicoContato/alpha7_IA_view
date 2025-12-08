@@ -168,6 +168,7 @@ app.post('/api/buscar-medicamentos', async (req, res) => {
     console.log(`\n[RESULTADO FINAL] ${produtos.length} produtos encontrados via ${tipoBusca}`);
     console.log(`========================================\n`);
 
+    
     return res.status(200).json({
       query_original: termoBusca,
       principio_ativo_extraido: principioAtivoBusca !== termoBusca ? principioAtivoBusca : null,
