@@ -20,6 +20,7 @@
   "homepage": "https://github.com/UnicoContato/alpha7_ia_superpopular#readme",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.1",
+    "axios": "^1.13.2",
     "dotenv": "^17.2.3",
     "env": "^0.0.2",
     "express": "^5.2.1",
