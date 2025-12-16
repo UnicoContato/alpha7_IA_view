@@ -12,11 +12,11 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 
 const pool = new Pool({
-  host: '204.216.147.179',
-  port: 5432,
-  database: 'superpopular_esc_2024_02_26',
-  user: 'unicocontato',
-  password: 'PTltrv0RG6wqePEZ'
+  host: process.env.DB_HOST ,
+  port: process.env.DB_PORT ,
+  database: process.env.DB_NAME ,
+  user: process.env.DB_USER ,
+  password: process.env.DB_PASSWORD
 });
 
 // ============================================================
