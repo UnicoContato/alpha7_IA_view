@@ -2,6 +2,7 @@
 const express = require('express');
 const { Pool } = require('pg');
 const axios = require('axios');
+require('dotenv').config();
 
 const app = express();
 app.use(express.json());
