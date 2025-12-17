@@ -34,7 +34,7 @@ const QUERY_CAMPOS_PRECO = `
   COALESCE(e.estoque, 0) as estoque_disponivel,
   e.embalagemid,
   em.descricao as embalagem_descricao,
-  
+   em.codigobarras, 
   -- ✅ PREÇO NORMAL DA EMBALAGEM
   em.precovenda as preco_normal,
   
@@ -399,6 +399,7 @@ app.post('/api/buscar-medicamentos', async (req, res) => {
         fabricante_id: p.fabricanteid,
         embalagem_id: p.embalagemid,
         embalagem_descricao: p.embalagem_descricao,
+        codigo_barras: p.codigobarras || null,
         estoque_disponivel: p.estoque_disponivel,
         
         // ✅ PREÇOS COMPLETOS
