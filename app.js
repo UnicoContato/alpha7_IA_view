@@ -1,8 +1,9 @@
-// app.js - Express.js 
+// app.js - Express.js REFATORADO (UM PRODUTO POR VEZ)
 const express = require('express');
 const { Pool } = require('pg');
 const axios = require('axios');
 const { formasFarmaceuticas } = require('./similarity');
+const { expandirAbreviacoes, gerarCondicoesBusca } = require('./abreviacoes');
 require('dotenv').config();
 
 const app = express();
@@ -20,161 +21,431 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD
 });
 
-// Unidade de negócio padrão (pode vir de env ou request)
 const UNIDADE_NEGOCIO_ID_PADRAO = parseInt(process.env.UNIDADE_NEGOCIO_ID || '65984');
 
 // ============================================================
-// FUNÇÃO: GERAR CAMPOS DE PREÇO COM PARÂMETRO DINÂMICO
+// UTILITÁRIOS
 // ============================================================
-function gerarCamposPreco(paramIndex) {
-  // paramIndex é o índice do parâmetro $N para unidadenegocioid
-  return `
-  p.id,
-  p.codigo,
-  p.descricao,
-  p.status,
-  p.registroms,
-  p.fabricanteid,
-  pa.id as principioativo_id,
-  pa.nome as principioativo_nome,
-  COALESCE(e.estoque, 0) as estoque_disponivel,
-  e.embalagemid,
-  em.descricao as embalagem_descricao,
-  em.codigobarras, 
-  em.precovenda as preco_normal,
-  
-  (
-    SELECT MIN(ico.precooferta)
-    FROM itemcadernooferta ico
-    INNER JOIN cadernooferta co ON co.id = ico.cadernoofertaid
-    INNER JOIN unidadenegocioparticipantecadernooferta unp 
-      ON unp.cadernoofertaid = co.id
-    WHERE ico.embalagemid = em.id
-      AND ico.tipooferta = 'P'
-      AND co.status = 'A'
-      AND unp.unidadenegocioid = $${paramIndex}
-      AND CURRENT_TIMESTAMP BETWEEN co.datahorainicial AND co.datahorafinal
-  ) as menor_preco_oferta,
-  
-  (
-    SELECT json_build_object(
-      'caderno_oferta_id', co.id,
-      'nome', co.nome,
-      'data_inicial', co.datahorainicial,
-      'data_final', co.datahorafinal,
-      'origem', co.origem
-    )
-    FROM itemcadernooferta ico
-    INNER JOIN cadernooferta co ON co.id = ico.cadernoofertaid
-    INNER JOIN unidadenegocioparticipantecadernooferta unp 
-      ON unp.cadernoofertaid = co.id
-    WHERE ico.embalagemid = em.id
-      AND ico.tipooferta = 'P'
-      AND co.status = 'A'
-      AND unp.unidadenegocioid = $${paramIndex}
-      AND CURRENT_TIMESTAMP BETWEEN co.datahorainicial AND co.datahorafinal
-    ORDER BY ico.precooferta ASC
-    LIMIT 1
-  ) as origem_oferta_preco,
-  
-  (
-    SELECT MAX(ico.descontooferta)
-    FROM itemcadernooferta ico
-    INNER JOIN cadernooferta co ON co.id = ico.cadernoofertaid
-    INNER JOIN unidadenegocioparticipantecadernooferta unp 
-      ON unp.cadernoofertaid = co.id
-    WHERE ico.embalagemid = em.id
-      AND ico.tipooferta = 'D'
-      AND co.status = 'A'
-      AND unp.unidadenegocioid = $${paramIndex}
-      AND CURRENT_TIMESTAMP BETWEEN co.datahorainicial AND co.datahorafinal
-  ) as desconto_percentual,
-  
-  (
-    SELECT json_build_object(
-      'caderno_oferta_id', co.id,
-      'nome', co.nome,
-      'data_inicial', co.datahorainicial,
-      'data_final', co.datahorafinal,
-      'origem', co.origem
-    )
-    FROM itemcadernooferta ico
-    INNER JOIN cadernooferta co ON co.id = ico.cadernoofertaid
-    INNER JOIN unidadenegocioparticipantecadernooferta unp 
-      ON unp.cadernoofertaid = co.id
-    WHERE ico.embalagemid = em.id
-      AND ico.tipooferta = 'D'
-      AND co.status = 'A'
-      AND unp.unidadenegocioid = $${paramIndex}
-      AND CURRENT_TIMESTAMP BETWEEN co.datahorainicial AND co.datahorafinal
-    ORDER BY ico.descontooferta DESC
-    LIMIT 1
-  ) as origem_oferta_desconto,
-  
-  CASE
-    WHEN (
-      SELECT MAX(ico.descontooferta)
-      FROM itemcadernooferta ico
-      INNER JOIN cadernooferta co ON co.id = ico.cadernoofertaid
-      INNER JOIN unidadenegocioparticipantecadernooferta unp 
-        ON unp.cadernoofertaid = co.id
-      WHERE ico.embalagemid = em.id
-        AND ico.tipooferta = 'D'
-        AND co.status = 'A'
-        AND unp.unidadenegocioid = $${paramIndex}
-        AND CURRENT_TIMESTAMP BETWEEN co.datahorainicial AND co.datahorafinal
-    ) IS NOT NULL 
-    THEN em.precovenda * (1 - (
-      SELECT MAX(ico.descontooferta) / 100
-      FROM itemcadernooferta ico
-      INNER JOIN cadernooferta co ON co.id = ico.cadernoofertaid
-      INNER JOIN unidadenegocioparticipantecadernooferta unp 
-        ON unp.cadernoofertaid = co.id
-      WHERE ico.embalagemid = em.id
-        AND ico.tipooferta = 'D'
-        AND co.status = 'A'
-        AND unp.unidadenegocioid = $${paramIndex}
-        AND CURRENT_TIMESTAMP BETWEEN co.datahorainicial AND co.datahorafinal
-    ))
-    ELSE COALESCE(
-      (
-        SELECT MIN(ico.precooferta)
-        FROM itemcadernooferta ico
-        INNER JOIN cadernooferta co ON co.id = ico.cadernoofertaid
-        INNER JOIN unidadenegocioparticipantecadernooferta unp 
-          ON unp.cadernoofertaid = co.id
-        WHERE ico.embalagemid = em.id
-          AND ico.tipooferta = 'P'
-          AND co.status = 'A'
-          AND unp.unidadenegocioid = $${paramIndex}
-          AND CURRENT_TIMESTAMP BETWEEN co.datahorainicial AND co.datahorafinal
-      ),
-      em.precovenda
-    )
-  END as preco_final,
-  
-  (
-    SELECT json_build_object(
-      'leve', ico.leve,
-      'pague', ico.pague,
-      'desconto_levepague', ico.descontolevepague
-    )
-    FROM itemcadernooferta ico
-    INNER JOIN cadernooferta co ON co.id = ico.cadernoofertaid
-    INNER JOIN unidadenegocioparticipantecadernooferta unp 
-      ON unp.cadernoofertaid = co.id
-    WHERE ico.embalagemid = em.id
-      AND ico.leve IS NOT NULL
-      AND ico.pague IS NOT NULL
-      AND co.status = 'A'
-      AND unp.unidadenegocioid = $${paramIndex}
-      AND CURRENT_TIMESTAMP BETWEEN co.datahorainicial AND co.datahorafinal
-    LIMIT 1
-  ) as promocao_levepague
-  `;
+
+function extrairFormaFarmaceutica(termo) {
+  let principioAtivoBusca = termo;
+  let formaFarmaceutica = null;
+  let variacoesForma = [];
+
+  for (const [forma, variacoes] of Object.entries(formasFarmaceuticas)) {
+    for (const variacao of variacoes) {
+      const regex = new RegExp(`\\b${variacao}\\b`, 'i');
+      if (regex.test(termo)) {
+        formaFarmaceutica = forma;
+        variacoesForma = variacoes;
+        principioAtivoBusca = termo.replace(regex, '').trim();
+        
+        // 🔧 ADICIONE ESTAS LINHAS:
+        // Remove preposições e artigos que sobram
+        principioAtivoBusca = principioAtivoBusca
+          .replace(/\b(em|de|da|do|das|dos|na|no|nas|nos|com|para|por)\b/gi, '')
+          .replace(/\s+/g, ' ')  // Remove espaços múltiplos
+          .trim();
+        
+        break;
+      }
+    }
+    if (formaFarmaceutica) break;
+  }
+
+  return { principioAtivoBusca, formaFarmaceutica, variacoesForma };
 }
 
-// ROTA: Buscar medicamentos
+// ============================================================
+// ETAPA 1: BUSCAR POR DESCRIÇÃO
+// ============================================================
+
+
+async function buscarPorDescricao(termoBusca) {
+  console.log(`\n[ETAPA 1] Buscando por DESCRIÇÃO: "${termoBusca}"`);
+  
+  try {
+    // Expandir termo para incluir variações com abreviações
+    const variacoes = expandirAbreviacoes(termoBusca);
+    
+    console.log(`[ETAPA 1] 🔍 Variações geradas: ${variacoes.length}`);
+    variacoes.forEach((v, idx) => {
+      console.log(`         ${idx + 1}. "${v}"`);
+    });
+    
+    const { condicoes, parametros } = gerarCondicoesBusca(variacoes);
+    
+    const query = `
+      SELECT 
+        p.id,
+        p.codigo,
+        p.descricao,
+        p.status,
+        p.registroms,
+        p.fabricanteid,
+        pa.id as principioativo_id,
+        pa.nome as principioativo_nome,
+        em.id as embalagem_id,
+        em.descricao as embalagem_descricao,
+        em.codigobarras
+      FROM produto p
+      LEFT JOIN principioativo pa ON p.principioativoid = pa.id
+      INNER JOIN embalagem em ON em.produtoid = p.id
+      WHERE (${condicoes})
+        AND p.status = 'A'
+      ORDER BY p.descricao
+      LIMIT 100
+    `;
+    
+    const resultado = await pool.query(query, parametros);
+
+    if (resultado.rows.length > 0) {
+      console.log(`[ETAPA 1] ✅ Encontrados ${resultado.rows.length} produtos`);
+      return {
+        encontrado: true,
+        produtos: resultado.rows,
+        metodo: 'descricao',
+        variacoes_usadas: variacoes
+      };
+    } else {
+      console.log(`[ETAPA 1] ❌ Nenhum produto encontrado`);
+      return {
+        encontrado: false,
+        produtos: [],
+        metodo: 'descricao',
+        variacoes_usadas: variacoes
+      };
+    }
+  } catch (error) {
+    console.error(`[ETAPA 1] ⚠️ Erro:`, error.message);
+    throw error;
+  }
+}
+
+// ============================================================
+// ETAPA 2: BUSCAR POR PRINCÍPIO ATIVO
+// ============================================================
+
+async function buscarPorPrincipioAtivo(principioAtivo, formaFarmaceutica, variacoesForma) {
+  console.log(`\n[ETAPA 2] Buscando por PRINCÍPIO ATIVO: "${principioAtivo}"`);
+  
+  try {
+    // 2.1: Encontrar princípios ativos
+    const resultadoPrincipios = await pool.query(`
+      SELECT DISTINCT id, nome 
+      FROM principioativo 
+      WHERE nome ILIKE $1
+      ORDER BY nome
+    `, [`%${principioAtivo}%`]);
+
+    if (resultadoPrincipios.rows.length === 0) {
+      console.log(`[ETAPA 2] ❌ Nenhum princípio ativo encontrado`);
+      return {
+        encontrado: false,
+        produtos: [],
+        principiosEncontrados: [],
+        metodo: 'principio_ativo'
+      };
+    }
+
+    console.log(`[ETAPA 2] 📋 Encontrados ${resultadoPrincipios.rows.length} princípios ativos`);
+    const principiosEncontrados = resultadoPrincipios.rows;
+
+    // 2.2: Buscar produtos com esses princípios ativos
+    const principioIds = principiosEncontrados.map(p => p.id);
+    const principioPlaceholders = principioIds.map((_, idx) => `$${idx + 1}`).join(',');
+    
+    let queryProdutos = `
+      SELECT 
+        p.id,
+        p.codigo,
+        p.descricao,
+        p.status,
+        p.registroms,
+        p.fabricanteid,
+        pa.id as principioativo_id,
+        pa.nome as principioativo_nome,
+        em.id as embalagem_id,
+        em.descricao as embalagem_descricao,
+        em.codigobarras
+      FROM produto p
+      INNER JOIN principioativo pa ON p.principioativoid = pa.id
+      INNER JOIN embalagem em ON em.produtoid = p.id
+      WHERE pa.id IN (${principioPlaceholders})
+        AND p.status = 'A'
+    `;
+    
+    let params = [...principioIds];
+
+    // Filtrar por forma farmacêutica se houver
+    if (formaFarmaceutica && variacoesForma.length > 0) {
+      const startIdx = principioIds.length + 1;
+      const formaPlaceholders = variacoesForma.map((_, idx) => `p.descricao ILIKE $${startIdx + idx}`).join(' OR ');
+      queryProdutos += ` AND (${formaPlaceholders})`;
+      params.push(...variacoesForma.map(v => `%${v}%`));
+      console.log(`[ETAPA 2] 🔍 Filtrando por formas: ${variacoesForma.join(', ')}`);
+    }
+
+    queryProdutos += ` ORDER BY p.descricao LIMIT 100`;
+
+    const resultadoProdutos = await pool.query(queryProdutos, params);
+
+    // 2.3: Fallback sem forma farmacêutica
+    if (resultadoProdutos.rows.length === 0 && formaFarmaceutica) {
+      console.log(`[ETAPA 2] 🔄 Tentando sem filtro de forma...`);
+      
+      const querySemForma = `
+        SELECT 
+          p.id,
+          p.codigo,
+          p.descricao,
+          p.status,
+          p.registroms,
+          p.fabricanteid,
+          pa.id as principioativo_id,
+          pa.nome as principioativo_nome,
+          em.id as embalagem_id,
+          em.descricao as embalagem_descricao,
+          em.codigobarras
+        FROM produto p
+        INNER JOIN principioativo pa ON p.principioativoid = pa.id
+        INNER JOIN embalagem em ON em.produtoid = p.id
+        WHERE pa.id IN (${principioPlaceholders})
+          AND p.status = 'A'
+        ORDER BY p.descricao
+        LIMIT 100
+      `;
+      
+      const resultadoSemForma = await pool.query(querySemForma, principioIds);
+      
+      if (resultadoSemForma.rows.length > 0) {
+        console.log(`[ETAPA 2] ✅ Encontrados ${resultadoSemForma.rows.length} produtos (sem forma)`);
+        return {
+          encontrado: true,
+          produtos: resultadoSemForma.rows,
+          principiosEncontrados,
+          metodo: 'principio_ativo_sem_forma'
+        };
+      }
+    } else if (resultadoProdutos.rows.length > 0) {
+      console.log(`[ETAPA 2] ✅ Encontrados ${resultadoProdutos.rows.length} produtos`);
+      return {
+        encontrado: true,
+        produtos: resultadoProdutos.rows,
+        principiosEncontrados,
+        metodo: 'principio_ativo'
+      };
+    }
+
+    console.log(`[ETAPA 2] ❌ Nenhum produto encontrado`);
+    return {
+      encontrado: false,
+      produtos: [],
+      principiosEncontrados,
+      metodo: 'principio_ativo'
+    };
+
+  } catch (error) {
+    console.error(`[ETAPA 2] ⚠️ Erro:`, error.message);
+    throw error;
+  }
+}
+
+// ============================================================
+// ETAPA 3: VERIFICAR DISPONIBILIDADE
+// ============================================================
+
+async function verificarDisponibilidade(produtos, unidadeNegocioId) {
+  console.log(`\n[ETAPA 3] Verificando DISPONIBILIDADE de ${produtos.length} produtos...`);
+  
+  if (produtos.length === 0) {
+    console.log(`[ETAPA 3] ⚠️ Nenhum produto para verificar`);
+    return [];
+  }
+
+  try {
+    const embalagemIds = produtos.map(p => p.embalagem_id);
+    const placeholders = embalagemIds.map((_, idx) => `$${idx + 1}`).join(',');
+    
+    const resultado = await pool.query(`
+      SELECT 
+        embalagemid,
+        COALESCE(estoque, 0) as estoque_disponivel
+      FROM estoque
+      WHERE embalagemid IN (${placeholders})
+        AND unidadenegocioid = $${embalagemIds.length + 1}
+    `, [...embalagemIds, unidadeNegocioId]);
+
+    const estoqueMap = {};
+    resultado.rows.forEach(row => {
+      estoqueMap[row.embalagemid] = row.estoque_disponivel;
+    });
+
+    // Adicionar informação de estoque aos produtos
+    produtos.forEach(produto => {
+      produto.estoque_disponivel = estoqueMap[produto.embalagem_id] || 0;
+      produto.tem_estoque = (estoqueMap[produto.embalagem_id] || 0) > 0;
+    });
+
+    const produtosComEstoque = produtos.filter(p => p.tem_estoque);
+    const produtosSemEstoque = produtos.filter(p => !p.tem_estoque);
+
+    console.log(`[ETAPA 3] ✅ ${produtosComEstoque.length} com estoque | ❌ ${produtosSemEstoque.length} sem estoque`);
+
+    return produtosComEstoque;
+
+  } catch (error) {
+    console.error(`[ETAPA 3] ⚠️ Erro:`, error.message);
+    throw error;
+  }
+}
+
+// ============================================================
+// ETAPA 4: ORDENAR POR IA
+// ============================================================
+async function ordenarPorIA(produtos, termoBusca) {
+  console.log(`\n[ETAPA 4] Ordenando ${produtos.length} produtos por RELEVÂNCIA com IA...`);
+  
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'sua-chave-aqui') {
+    console.log(`[ETAPA 4] ⚠️ IA não configurada - pulando ordenação`);
+    return { produtos, ordenado: false };
+  }
+
+  if (produtos.length <= 1) {
+    console.log(`[ETAPA 4] ⚠️ Apenas ${produtos.length} produto(s) - ordenação desnecessária`);
+    return { produtos, ordenado: false };
+  }
+
+  try {
+    // Aumentar limite e ajustar dinamicamente
+    const MAX_PRODUTOS_IA = Math.min(50, produtos.length);
+    const produtosParaIA = produtos.slice(0, MAX_PRODUTOS_IA);
+    const produtosRestantes = produtos.slice(MAX_PRODUTOS_IA);
+
+    console.log(`[ETAPA 4] Enviando ${produtosParaIA.length} produtos para IA analisar`);
+    if (produtosRestantes.length > 0) {
+      console.log(`[ETAPA 4] ${produtosRestantes.length} produtos serão adicionados ao final`);
+    }
+
+    const listaProdutos = produtosParaIA.map((p, idx) => ({
+      index: idx,
+      descricao: (p.descricao ?? "").substring(0, 150), // Limitar tamanho
+      principio_ativo: p.principioativo_nome ?? "",
+    }));
+
+    const prompt = `Analise os produtos farmacêuticos abaixo e ordene por relevância para a busca: "${termoBusca}"
+
+Produtos (total: ${listaProdutos.length}):
+${JSON.stringify(listaProdutos, null, 2)}
+
+Critérios de relevância (por prioridade):
+1. Correspondência exata do princípio ativo ou nome comercial
+2. Correspondência da forma farmacêutica (comprimido, xarope, injetável, etc)
+3. Correspondência parcial de palavras-chave
+4. Produtos encontrados por "ambos" os métodos têm ligeira preferência
+
+IMPORTANTE: 
+- Retorne APENAS um array JSON com os ${listaProdutos.length} índices ordenados do mais relevante ao menos relevante
+- Formato: [5,2,0,1,3,4,...]
+- Não inclua texto, explicações ou markdown
+- Todos os ${listaProdutos.length} índices devem estar presentes (0 a ${listaProdutos.length - 1})`;
+
+    const response = await axios.post(
+      OPENAI_API_URL,
+      {
+        model: 'gpt-5-nano',
+        messages: [
+          {
+            role: 'system',
+            content: 'Você é um especialista em classificação de medicamentos farmacêuticos. Responda SEMPRE e APENAS com um array JSON de números inteiros, representando os índices ordenados por relevância. Sem texto adicional, sem markdown, sem explicações.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 1,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000 // 30 segundos de timeout
+      }
+    );
+
+    let texto = response.data.choices[0].message.content.trim();
+    console.log(`[ETAPA 4] Resposta da IA (primeiros 200 chars): ${texto.substring(0, 200)}`);
+    
+    // Limpar markdown e outros caracteres
+    texto = texto.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    
+    // Tentar extrair array JSON
+    const match = texto.match(/\[[\d,\s]+\]/);
+
+    if (!match) {
+      console.error(`[ETAPA 4] ❌ IA não retornou array válido. Resposta: ${texto.substring(0, 500)}`);
+      throw new Error("IA não retornou array JSON válido.");
+    }
+
+    const indices = JSON.parse(match[0]);
+
+    // Validar quantidade de índices
+    if (indices.length !== produtosParaIA.length) {
+      console.error(`[ETAPA 4] ❌ IA retornou ${indices.length} índices, esperado ${produtosParaIA.length}`);
+      throw new Error(`Quantidade de índices incorreta: ${indices.length} vs ${produtosParaIA.length}`);
+    }
+
+    // Validar se todos os índices são válidos
+    const indicesValidos = indices.every(idx => 
+      Number.isInteger(idx) && idx >= 0 && idx < produtosParaIA.length
+    );
+
+    if (!indicesValidos) {
+      console.error(`[ETAPA 4] ❌ IA retornou índices inválidos`);
+      throw new Error("Índices fora do intervalo válido");
+    }
+
+    // Verificar duplicatas
+    const indicesUnicos = new Set(indices);
+    if (indicesUnicos.size !== indices.length) {
+      console.error(`[ETAPA 4] ❌ IA retornou índices duplicados`);
+      throw new Error("Índices duplicados detectados");
+    }
+
+    // Aplicar ordenação
+    const produtosOrdenados = indices.map((idx, pos) => ({
+      ...produtosParaIA[idx],
+      relevancia_score: produtosParaIA.length - pos
+    }));
+
+    // Adicionar produtos restantes ao final (se houver)
+    if (produtosRestantes.length > 0) {
+      produtosRestantes.forEach(p => {
+        produtosOrdenados.push({ ...p, relevancia_score: 0 });
+      });
+    }
+
+    console.log(`[ETAPA 4] ✅ ${produtosOrdenados.length} produtos ordenados por IA com sucesso`);
+    console.log(`[ETAPA 4] Top 3: ${produtosOrdenados.slice(0, 3).map(p => p.descricao.substring(0, 50)).join(' | ')}`);
+    
+    return { produtos: produtosOrdenados, ordenado: true };
+
+  } catch (error) {
+    console.error(`[ETAPA 4] ⚠️ Erro na ordenação por IA:`, error.message);
+    if (error.response) {
+      console.error(`[ETAPA 4] Resposta da API:`, error.response.data);
+    }
+    
+    // Em caso de erro, retornar produtos na ordem original
+    console.log(`[ETAPA 4] Retornando produtos na ordem original (sem ordenação por IA)`);
+    return { produtos, ordenado: false };
+  }
+}
+// ============================================================
+// ROTA PRINCIPAL - UM PRODUTO POR VEZ
+// ============================================================
 app.post('/api/buscar-medicamentos', async (req, res) => {
   try {
     const { query, unidade_negocio_id } = req.body;
@@ -183,217 +454,118 @@ app.post('/api/buscar-medicamentos', async (req, res) => {
       return res.status(400).json({ erro: 'Query vazia' });
     }
 
-    // Usar unidade_negocio_id do body ou padrão
     const unidadeNegocioId = unidade_negocio_id || UNIDADE_NEGOCIO_ID_PADRAO;
-
     const termoBusca = query.trim().toLowerCase();
-    let produtos = [];
-    let tipoBusca = '';
-    let principiosEncontrados = [];
-
-    // const formasFarmaceuticas = {
-    //   'gotas': ['gotas', 'gts', 'gt'],
-    //   'comprimido': ['comprimido', 'comprimidos', 'cp', 'comp'],
-    //   'capsula': ['capsula', 'capsulas', 'caps'],
-    //   'xarope': ['xarope', 'xpe'],
-    //   'pomada': ['pomada', 'pom'],
-    //   'creme': ['creme', 'cr'],
-    //   'gel': ['gel'],
-    //   'spray': ['spray'],
-    //   'injetavel': ['injetavel', 'inj', 'ampola', 'amp'],
-    //   'solucao': ['solucao', 'sol'],
-    //   'suspensao': ['suspensao', 'susp']
-    // };
-    
-    // Certifique-se de que o arquivo similarity.js exporta um objeto chamado `formasFarmaceuticas`
-    // Exemplo de estrutura esperada no similarity.js:
-    // module.exports = {
-    //   formasFarmaceuticas: {
-    //     'gotas': ['gotas', 'gts', 'gt'],
-    //     'comprimido': ['comprimido', 'comprimidos', 'cp', 'comp'],
-    //     ...
-    //   }
-    // };
-
-    let principioAtivoBusca = termoBusca;
-    let formaFarmaceutica = null;
-    let variacoesForma = [];
-
-    for (const [forma, variacoes] of Object.entries(formasFarmaceuticas)) {
-      for (const variacao of variacoes) {
-        const regex = new RegExp(`\\b${variacao}\\b`, 'i');
-        if (regex.test(termoBusca)) {
-          formaFarmaceutica = forma;
-          variacoesForma = variacoes;
-          principioAtivoBusca = termoBusca.replace(regex, '').trim();
-          break;
-        }
-      }
-      if (formaFarmaceutica) break;
-    }
 
     console.log(`\n========================================`);
-    console.log(`[BUSCA] Termo original: "${termoBusca}"`);
-    console.log(`[BUSCA] Princípio ativo: "${principioAtivoBusca}"`);
-    console.log(`[BUSCA] Forma farmacêutica: "${formaFarmaceutica || 'nenhuma'}"`);
+    console.log(`[BUSCA] Termo: "${termoBusca}"`);
     console.log(`[BUSCA] Unidade Negócio ID: ${unidadeNegocioId}`);
-    console.log(`========================================\n`);
+    console.log(`========================================`);
 
-    // ETAPA 1: LISTAR TODOS OS PRINCÍPIOS ATIVOS
-    console.log(`[1] Buscando TODOS os princípios ativos que contêm: "${principioAtivoBusca}"`);
+    // Extrair informações do termo
+    const { principioAtivoBusca, formaFarmaceutica, variacoesForma } = extrairFormaFarmaceutica(termoBusca);
     
-    const resultadoPrincipios = await pool.query(`
-      SELECT DISTINCT id, nome 
-      FROM principioativo 
-      WHERE nome ILIKE $1
-      ORDER BY nome
-    `, [`%${principioAtivoBusca}%`]);
+    console.log(`[INFO] Princípio ativo extraído: "${principioAtivoBusca}"`);
+    console.log(`[INFO] Forma farmacêutica: "${formaFarmaceutica || 'nenhuma'}"`);
 
-    principiosEncontrados = resultadoPrincipios.rows;
-    console.log(`[1] ✅ Encontrados ${principiosEncontrados.length} princípios ativos:`);
-    principiosEncontrados.forEach((pa, idx) => {
-      console.log(`    ${idx + 1}. [ID: ${pa.id}] ${pa.nome}`);
+    let produtosPrincipioAtivo = [];
+    let produtosDescricao = [];
+    let principiosEncontrados = [];
+    let metodosUtilizados = [];
+
+    // ETAPA 1: Buscar por AMBOS os métodos em paralelo
+    const [resultadoPrincipioAtivo, resultadoDescricao] = await Promise.all([
+      buscarPorPrincipioAtivo(principioAtivoBusca, formaFarmaceutica, variacoesForma),
+      buscarPorDescricao(termoBusca)
+    ]);
+
+    // Coletar produtos de princípio ativo
+    if (resultadoPrincipioAtivo.encontrado) {
+      produtosPrincipioAtivo = resultadoPrincipioAtivo.produtos;
+      principiosEncontrados = resultadoPrincipioAtivo.principiosEncontrados || [];
+      metodosUtilizados.push(resultadoPrincipioAtivo.metodo);
+      console.log(`[INFO] Encontrados ${produtosPrincipioAtivo.length} produtos por princípio ativo`);
+    }
+
+    // Coletar produtos de descrição
+    if (resultadoDescricao.produtos && resultadoDescricao.produtos.length > 0) {
+      produtosDescricao = resultadoDescricao.produtos;
+      metodosUtilizados.push(resultadoDescricao.metodo);
+      console.log(`[INFO] Encontrados ${produtosDescricao.length} produtos por descrição`);
+    }
+
+    // ETAPA 2: Combinar e remover duplicatas (usando ID como chave única)
+    const produtosMap = new Map();
+    
+    // Adicionar produtos de princípio ativo (prioridade)
+    produtosPrincipioAtivo.forEach(p => {
+      produtosMap.set(p.id, { ...p, origem: 'principio_ativo' });
+    });
+    
+    // Adicionar produtos de descrição (se não existir)
+    produtosDescricao.forEach(p => {
+      if (!produtosMap.has(p.id)) {
+        produtosMap.set(p.id, { ...p, origem: 'descricao' });
+      } else {
+        // Marcar que foi encontrado por ambos os métodos
+        const produto = produtosMap.get(p.id);
+        produto.origem = 'ambos';
+        produtosMap.set(p.id, produto);
+      }
     });
 
-    // ETAPA 2: Buscar produtos
-    if (principiosEncontrados.length > 0) {
-      console.log(`\n[2] Buscando produtos que usam QUALQUER UM desses ${principiosEncontrados.length} princípios...`);
-      
-      const principioIds = principiosEncontrados.map(p => p.id);
-      const principioPlaceholders = principioIds.map((_, idx) => `$${idx + 1}`).join(',');
-      
-      // Gerar campos com índice correto (unidadeNegocioId será o último parâmetro)
-      const unidadeParamIndex = principioIds.length + (formaFarmaceutica ? variacoesForma.length : 0) + 1;
-      const camposPreco = gerarCamposPreco(unidadeParamIndex);
-      
-      let queryProdutos = `
-        SELECT ${camposPreco}
-        FROM produto p
-        INNER JOIN principioativo pa ON p.principioativoid = pa.id
-        INNER JOIN embalagem em ON em.produtoid = p.id
-        INNER JOIN estoque e ON e.embalagemid = em.id
-        WHERE pa.id IN (${principioPlaceholders})
-          AND p.status = 'A'
-          AND e.unidadenegocioid = $${unidadeParamIndex}
-          AND COALESCE(e.estoque, 0) > 0
-      `;
-      
-      let params = [...principioIds];
-
-      if (formaFarmaceutica && variacoesForma.length > 0) {
-        const startIdx = principioIds.length + 1;
-        const formaPlaceholders = variacoesForma.map((_, idx) => `p.descricao ILIKE $${startIdx + idx}`).join(' OR ');
-        queryProdutos += ` AND (${formaPlaceholders})`;
-        params.push(...variacoesForma.map(v => `%${v}%`));
-        console.log(`[2] Filtrando por formas: ${variacoesForma.join(', ')}`);
-      }
-
-      params.push(unidadeNegocioId);
-      queryProdutos += ` ORDER BY p.descricao LIMIT 100`;
-
-      const resultadoProdutos = await pool.query(queryProdutos, params);
-      produtos = resultadoProdutos.rows;
-      tipoBusca = 'principio_ativo';
-
-      console.log(`[2] ✅ Encontrados ${produtos.length} produtos`);
-      
-      const distribuicao = {};
-      produtos.forEach(p => {
-        distribuicao[p.principioativo_nome] = (distribuicao[p.principioativo_nome] || 0) + 1;
-      });
-      console.log(`\n[DISTRIBUIÇÃO POR PRINCÍPIO ATIVO]:`);
-      Object.entries(distribuicao).forEach(([pa, count]) => {
-        console.log(`    - ${pa}: ${count} produto(s)`);
-      });
-
-      // FALLBACK sem forma
-      if (produtos.length === 0 && formaFarmaceutica) {
-        console.log(`\n[2.5] 🔄 Tentando busca SEM filtro de forma farmacêutica...`);
-        
-        const unidadeParamIndexSemForma = principioIds.length + 1;
-        const camposPrecoSemForma = gerarCamposPreco(unidadeParamIndexSemForma);
-        
-        const queryProdutosSemForma = `
-          SELECT ${camposPrecoSemForma}
-          FROM produto p
-          INNER JOIN principioativo pa ON p.principioativoid = pa.id
-          INNER JOIN embalagem em ON em.produtoid = p.id
-          INNER JOIN estoque e ON e.embalagemid = em.id
-          WHERE pa.id IN (${principioPlaceholders})
-            AND p.status = 'A'
-            AND e.unidadenegocioid = $${unidadeParamIndexSemForma}
-            AND COALESCE(e.estoque, 0) > 0
-          ORDER BY p.descricao
-          LIMIT 100
-        `;
-        
-        const resultadoProdutosSemForma = await pool.query(queryProdutosSemForma, [...principioIds, unidadeNegocioId]);
-        produtos = resultadoProdutosSemForma.rows;
-        tipoBusca = 'principio_ativo_sem_forma';
-        console.log(`[2.5] ✅ Encontrados ${produtos.length} produtos (sem filtro de forma)`);
-      }
-    }
-
-    // ETAPA 3: Buscar por DESCRIÇÃO
-    if (produtos.length === 0) {
-      console.log(`\n[3] ❌ Não encontrou por princípio ativo. Buscando por descrição...`);
-      
-      const camposPrecoDesc = gerarCamposPreco(2);
-      
-      const resultadoDescricao = await pool.query(`
-        SELECT ${camposPrecoDesc}
-        FROM produto p
-        LEFT JOIN principioativo pa ON p.principioativoid = pa.id
-        INNER JOIN embalagem em ON em.produtoid = p.id
-        INNER JOIN estoque e ON e.embalagemid = em.id
-        WHERE p.descricao ILIKE $1
-          AND p.status = 'A'
-          AND e.unidadenegocioid = $2
-          AND COALESCE(e.estoque, 0) > 0
-        ORDER BY p.descricao
-        LIMIT 100
-      `, [`%${termoBusca}%`, unidadeNegocioId]);
+    let produtos = Array.from(produtosMap.values());
     
-      produtos = resultadoDescricao.rows;
-      tipoBusca = 'descricao';
-      console.log(`[3] ✅ Encontrados ${produtos.length} produtos por descrição`);
+    console.log(`[INFO] Total de produtos únicos combinados: ${produtos.length}`);
+
+    // ETAPA 3: Verificar disponibilidade
+    if (produtos.length > 0) {
+      produtos = await verificarDisponibilidade(produtos, unidadeNegocioId);
+      console.log(`[INFO] Após verificação de estoque: ${produtos.length} produtos`);
     }
 
-    console.log(`\n[RESULTADO FINAL] ${produtos.length} produtos encontrados via ${tipoBusca}`);
-
-    // ETAPA 4: IA
-    let produtosOrdenados = produtos;
-    let usouIA = false;
-
-    if (produtos.length > 1 && OPENAI_API_KEY && OPENAI_API_KEY !== 'sua-chave-aqui') {
-      console.log(`\n[4] 🤖 Usando IA para ordenar ${produtos.length} produtos...`);
-      
-      try {
-        produtosOrdenados = await ordenarProdutosPorIA(produtos, termoBusca);
-        usouIA = true;
-        console.log(`[4] ✅ Produtos ordenados por IA`);
-      } catch (error) {
-        console.error(`[4] ⚠️  Erro ao usar IA:`, error.message);
-        produtosOrdenados = produtos;
-      }
+    // ETAPA 4: Ordenar e filtrar por IA (aumentar limite se necessário)
+    let ordenadoPorIA = false;
+    if (produtos.length > 0) {
+      const resultadoIA = await ordenarPorIA(produtos, termoBusca);
+      produtos = resultadoIA.produtos;
+      ordenadoPorIA = resultadoIA.ordenado;
     }
 
+    const metodoBusca = metodosUtilizados.length > 0 
+      ? metodosUtilizados.join(' + ') 
+      : 'nenhum método encontrou resultados';
+
+    console.log(`\n========================================`);
+    console.log(`[RESULTADO] ${produtos.length} produto(s) encontrado(s)`);
+    console.log(`[RESULTADO] Métodos: ${metodoBusca}`);
+    console.log(`[RESULTADO] Ordenado por IA: ${ordenadoPorIA ? 'Sim' : 'Não'}`);
+    console.log(`[RESULTADO] Distribuição por origem:`);
+    console.log(`  - Princípio ativo: ${produtos.filter(p => p.origem === 'principio_ativo').length}`);
+    console.log(`  - Descrição: ${produtos.filter(p => p.origem === 'descricao').length}`);
+    console.log(`  - Ambos: ${produtos.filter(p => p.origem === 'ambos').length}`);
     console.log(`========================================\n`);
 
+    // Formatar resposta
     return res.status(200).json({
-      query_original: termoBusca,
-      principio_ativo_extraido: principioAtivoBusca !== termoBusca ? principioAtivoBusca : null,
-      forma_farmaceutica: formaFarmaceutica,
-      tipo_busca: tipoBusca,
-      ordenado_por_ia: usouIA,
-      unidade_negocio_id: unidadeNegocioId,
-      principios_ativos_encontrados: principiosEncontrados.map(p => ({
-        id: p.id,
-        nome: p.nome
-      })),
-      total_principios_ativos: principiosEncontrados.length,
-      total_resultados: produtosOrdenados.length,
-      produtos: produtosOrdenados.map(p => ({
+      busca: {
+        termo_original: termoBusca,
+        principio_ativo_extraido: principioAtivoBusca !== termoBusca ? principioAtivoBusca : null,
+        forma_farmaceutica: formaFarmaceutica
+      },
+      metadados: {
+        metodo_busca: metodoBusca,
+        ordenado_por_ia: ordenadoPorIA,
+        total_produtos: produtos.length,
+        total_principios_ativos: principiosEncontrados.length,
+        unidade_negocio_id: unidadeNegocioId,
+        estatisticas_origem: {
+          principio_ativo: produtos.filter(p => p.origem === 'principio_ativo').length,
+          descricao: produtos.filter(p => p.origem === 'descricao').length,
+          ambos: produtos.filter(p => p.origem === 'ambos').length
+        }
+      },
+      produtos: produtos.map(p => ({
         id: p.id,
         codigo: p.codigo,
         descricao: p.descricao,
@@ -401,126 +573,23 @@ app.post('/api/buscar-medicamentos', async (req, res) => {
         principio_ativo_id: p.principioativo_id,
         registro_ms: p.registroms,
         fabricante_id: p.fabricanteid,
-        embalagem_id: p.embalagemid,
+        embalagem_id: p.embalagem_id,
         embalagem_descricao: p.embalagem_descricao,
         codigo_barras: p.codigobarras || null,
-        estoque_disponivel: p.estoque_disponivel,
-        
-        preco: {
-          normal: p.preco_normal ? parseFloat(p.preco_normal) : null,
-          oferta: p.menor_preco_oferta ? parseFloat(p.menor_preco_oferta) : null,
-          final: p.preco_final ? parseFloat(p.preco_final) : null,
-          desconto_percentual: p.desconto_percentual ? parseFloat(p.desconto_percentual) : null,
-          tem_oferta: p.menor_preco_oferta !== null || p.desconto_percentual !== null,
-          economia: p.preco_normal && p.preco_final && p.preco_final < p.preco_normal
-            ? parseFloat((p.preco_normal - p.preco_final).toFixed(2))
-            : null,
-          percentual_economia: p.preco_normal && p.preco_final && p.preco_final < p.preco_normal
-            ? parseFloat((((p.preco_normal - p.preco_final) / p.preco_normal) * 100).toFixed(2))
-            : null
-        },
-        
-        origem_oferta: {
-          oferta_preco: p.origem_oferta_preco || null,
-          oferta_desconto: p.origem_oferta_desconto || null
-        },
-        
-        promocao_levepague: p.promocao_levepague || null,
-        relevancia_score: p.relevancia_score || null
+        estoque_disponivel: p.estoque_disponivel || 0,
+        relevancia_score: p.relevancia_score || null,
+        origem_busca: p.origem // Indica de onde veio o produto
       }))
     });
 
   } catch (error) {
-    console.error('❌ Erro ao buscar medicamentos:', error);
+    console.error('❌ Erro ao buscar medicamento:', error);
     return res.status(500).json({
       erro: 'Erro ao processar busca',
       detalhes: error.message
     });
   }
 });
-
-async function ordenarProdutosPorIA(produtos, buscaOriginal) {
-  try {
-    const MAX_PRODUTOS_IA = 30;
-    const produtosParaIA = produtos.slice(0, MAX_PRODUTOS_IA);
-    const produtosRestantes = produtos.slice(MAX_PRODUTOS_IA);
-
-    const listaProdutos = produtosParaIA.map((p, idx) => ({
-      index: idx,
-      descricao: p.descricao ?? "",
-      principio_ativo: p.principioativo_nome ?? ""
-    }));
-
-    const prompt = `Analise os produtos abaixo e ordene por relevância para a busca: "${buscaOriginal}"
-
-Produtos:
-${JSON.stringify(listaProdutos, null, 2)}
-
-Critérios de relevância:
-1. Correspondência exata do princípio ativo > correspondência parcial
-2. Correspondência da forma farmacêutica (se houver na busca)
-3. Descrição mais próxima da busca
-
-IMPORTANTE: Retorne APENAS um array JSON com os índices ordenados. Exemplo: [5,2,0,1,3,4]
-Não inclua explicações, apenas o array.`;
-
-    const response = await axios.post(
-      OPENAI_API_URL,
-      {
-        model: 'gpt-4.1',
-        messages: [
-          {
-            role: 'system',
-            content: 'Você é um especialista em classificação de medicamentos. Responda SEMPRE e APENAS com um array JSON de números, sem texto adicional, sem markdown, sem explicações.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        temperature: 0.1,
-        max_tokens: 500
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    let texto = response.data.choices[0].message.content.trim();
-    texto = texto.replace(/```json/g, '').replace(/```/g, '').trim();
-    const match = texto.match(/\[[\d,\s]+\]/);
-
-    if (!match) {
-      throw new Error("IA não retornou array válido.");
-    }
-
-    const indices = JSON.parse(match[0]);
-
-    if (indices.length !== produtosParaIA.length) {
-      throw new Error(`IA retornou ${indices.length} índices, esperado ${produtosParaIA.length}.`);
-    }
-
-    const produtosOrdenados = indices.map((i, pos) => ({
-      ...produtosParaIA[i],
-      relevancia_score: produtosParaIA.length - pos
-    }));
-
-    if (produtosRestantes.length > 0) {
-      produtosRestantes.forEach(p => {
-        produtosOrdenados.push({ ...p, relevancia_score: 0 });
-      });
-    }
-
-    return produtosOrdenados;
-
-  } catch (error) {
-    console.error("[IA] Erro:", error.message);
-    throw error;
-  }
-}
 
 app.get('/', (req, res) => {
   res.json({ mensagem: 'API de busca de medicamentos está rodando!' });
@@ -529,5 +598,6 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 5232;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
-  console.log(`📍 Rota de busca: POST http://localhost:${PORT}/api/buscar-medicamentos`);
+  console.log(`📍 Rota de busca: POST http://localhost:${PORT}/api/buscar-medicamento`);
+  console.log(`📋 Formato esperado: { "query": "dipirona", "unidade_negocio_id": 65984 }`);
 });
