@@ -2,28 +2,132 @@
 
 // 🔹 Sinônimos / abreviações curtas (EXPANSÃO CONTROLADA)
 const sinonimos = {
-    // Formas / embalagens
-    cp: ['comprimido'],
-    cpr: ['comprimido'],
-    cps: ['capsula'],
-    cap: ['capsula'],
-    fr: ['frasco', 'fralda', 'fraldas'],  // ✅ ADICIONADO: fralda
-    amp: ['ampola'],
-    inj: ['injetavel'],
+    // =========================
+    // Público / indicação
+    // =========================
+    adulto: ['adt', 'adulto'],
+    pediatrico: ['ped', 'pediatrico'],
   
-    // Tipos comuns
-    gen: ['generico'],
-    ref: ['referencia'],
-    sim: ['similar'],
+    // =========================
+    // Vias / uso / contexto
+    // =========================
+    dermatologica: ['derm', 'dermatologica'],
+    hospitalar: ['hosp', 'hospitalar'],
+    inaladora: ['inal', 'inaladora'],
+    injetavel: ['inj', 'injetavel', 'injecao'],
+    nasal: ['nas', 'nasal'],
+    oftalmologica: ['oft', 'oftalmologica'],
+    sublingual: ['subl', 'sublingual'],
+    vaginal: ['vag', 'vaginal'],
+    retal: ['ret', 'retal'],
+    oral: ['via oral'],
+    topico: ['top', 'topico'],
+    intravenoso: ['iv', 'intravenoso'],
+    intramuscular: ['im', 'intramuscular'],
+    subcutaneo: ['sc', 'subcutaneo'],
   
-    // Higiene / consumo
-    sh: ['shampoo'],
-    xampu: ['shampoo'],
-    sabon: ['sabonete'],
-    fralda: ['fr', 'fraldas'],
-    fraldas: ['fr', 'fralda'],
-    absorvente: ['abs', 'absorv'],
+    // =========================
+    // Formas farmacêuticas
+    // =========================
+    comprimido: ['cp', 'cpr', 'comprimido', 'comprimidos'],
+    capsula: ['caps', 'cps', 'cap', 'capsula', 'capsulas'],
+    dragea: ['drg', 'dragea', 'drageas'],
+    creme: ['cr', 'creme', 'cremes'],
+    pomada: ['pom', 'pomada'],
+    gel: ['gel', 'gels'],
+    unguento: ['ung', 'unguento'],
+    xarope: ['xpe', 'xar', 'xarope'],
+    solucao: ['sol', 'solucao'],
+    suspensao: ['susp', 'suspensao'],
+    elixir: ['elx', 'elixir'],
+    granulado: ['gran', 'granulado'],
+    efervescente: ['efv', 'efervescente'],
+    mastigavel: ['mast', 'mastigavel'],
+    revestido: ['rev', 'revestido', 'revestidos'],
+    pastilha: ['past', 'pastilhas'],
+    gotas: ['gts', 'gotas'],
+    spray: ['spray', 'aer', 'aerossol'],
+    colirio: ['col', 'colirio'],
+    supositorio: ['supos', 'supositorio'],
+    aplicador: ['aplic', 'aplicador'],
+  
+    // =========================
+    // Embalagens / apresentações
+    // =========================
+    frasco: ['fr', 'frasco', 'frascos'],
+    ampola: ['amp', 'ampola', 'ampolas'],
+    cartela: ['cart', 'cartela', 'cartelas'],
+    caixa: ['cx', 'caixa', 'caixas'],
+    blister: ['bl', 'blister', 'blisters'],
+    sache: ['sach', 'sache', 'saches'],
+    bisnaga: ['bisn', 'bisnaga', 'bisnagas'],
+    pacote: ['pct', 'pacote', 'pacotes'],
+    flaconete: ['flac', 'flaconete'],
+    envelope: ['env', 'envelope'],
+    seringa: ['ser', 'seringa', 'seringas'],
+    unidade: ['un', 'unidade', 'unidades'],
+  
+    // =========================
+    // Tipos de medicamento
+    // =========================
+    generico: ['gen', 'generico'],
+    referencia: ['ref', 'referencia'],
+    similar: ['sim', 'similar'],
+    etico: ['etico'],
+    controlado: ['control', 'controlado'],
+    tarjapreta: ['tarja preta'],
+    tarjavermelha: ['tarja vermelha'],
+    otc: ['isento de prescricao', 'sem receita'],
+  
+    // =========================
+    // Higiene pessoal
+    // =========================
+    shampoo: ['sh', 'xampu', 'shampoo'],
+    condicionador: ['cond', 'condicionador'],
+    sabonete: ['sabon', 'sabonete'],
+    sabonete_liquido: ['sabonliq', 'sabonete liquido'],
+    escova_dente: ['escdente', 'escova de dente'],
+    pasta_dente: ['pastadente', 'creme dental', 'pasta de dente'],
+    enxaguante_bucal: ['enxaguante', 'enxaguatorio bucal'],
+    desodorante: ['desod', 'desodorante'],
+    hidratante: ['hidrat', 'hidratante'],
+    protetor_solar: ['prot', 'protetor solar', 'filtro solar'],
+  
+    // =========================
+    // Bebês / cuidados
+    // =========================
+    fralda: ['fralda', 'fraldas', 'fr'],
+    lenco_umedecido: ['lenco', 'lencos umedecidos'],
+    pomada_assadura: ['pomassadura', 'pomada para assadura'],
+    mamadeira: ['mam', 'mamadeira'],
+    chupeta: ['chup', 'chupeta'],
+  
+    // =========================
+    // Saúde / consumo
+    // =========================
+    absorvente: ['abs', 'absorv', 'absorvente', 'absorvente higienico'],
+    termometro: ['term', 'termometro'],
+    teste_rapido: ['teste', 'teste rapido'],
+    alcool: ['alcool', 'alcool 70'],
+    algodao: ['algodao'],
+    gaze: ['gaze'],
+    agulha: ['agulha', 'agulhas'],
+  
+    // =========================
+    // Quantificadores / símbolos
+    // =========================
+    com: ['c/', 'com'],
+  
+    // =========================
+    // Unidades de medida
+    // =========================
+    centimetro: ['cm', 'centimetros'],
+    grama: ['g', 'grama'],
+    micrograma: ['mcg', 'micrograma'],
+    miligrama: ['mg', 'miligrama', 'miligramas'],
+    mililitro: ['ml', 'mililitro', 'mililitros'],
   };
+  
   
   // 🔹 Palavras descartáveis (ruído)
   const STOPWORDS = new Set([
