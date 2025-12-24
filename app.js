@@ -2,6 +2,7 @@
 const express = require('express');
 const { Pool } = require('pg');
 const axios = require('axios');
+const { formasFarmaceuticas } = require('./similarity');
 require('dotenv').config();
 
 const app = express();
@@ -190,20 +191,30 @@ app.post('/api/buscar-medicamentos', async (req, res) => {
     let tipoBusca = '';
     let principiosEncontrados = [];
 
-    const formasFarmaceuticas = {
-      'gotas': ['gotas', 'gts', 'gt'],
-      'comprimido': ['comprimido', 'comprimidos', 'cp', 'comp'],
-      'capsula': ['capsula', 'capsulas', 'caps'],
-      'xarope': ['xarope', 'xpe'],
-      'pomada': ['pomada', 'pom'],
-      'creme': ['creme', 'cr'],
-      'gel': ['gel'],
-      'spray': ['spray'],
-      'injetavel': ['injetavel', 'inj', 'ampola', 'amp'],
-      'solucao': ['solucao', 'sol'],
-      'suspensao': ['suspensao', 'susp']
-    };
+    // const formasFarmaceuticas = {
+    //   'gotas': ['gotas', 'gts', 'gt'],
+    //   'comprimido': ['comprimido', 'comprimidos', 'cp', 'comp'],
+    //   'capsula': ['capsula', 'capsulas', 'caps'],
+    //   'xarope': ['xarope', 'xpe'],
+    //   'pomada': ['pomada', 'pom'],
+    //   'creme': ['creme', 'cr'],
+    //   'gel': ['gel'],
+    //   'spray': ['spray'],
+    //   'injetavel': ['injetavel', 'inj', 'ampola', 'amp'],
+    //   'solucao': ['solucao', 'sol'],
+    //   'suspensao': ['suspensao', 'susp']
+    // };
     
+    // Certifique-se de que o arquivo similarity.js exporta um objeto chamado `formasFarmaceuticas`
+    // Exemplo de estrutura esperada no similarity.js:
+    // module.exports = {
+    //   formasFarmaceuticas: {
+    //     'gotas': ['gotas', 'gts', 'gt'],
+    //     'comprimido': ['comprimido', 'comprimidos', 'cp', 'comp'],
+    //     ...
+    //   }
+    // };
+
     let principioAtivoBusca = termoBusca;
     let formaFarmaceutica = null;
     let variacoesForma = [];
