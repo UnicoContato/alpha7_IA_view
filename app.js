@@ -479,6 +479,7 @@ app.post('/api/buscar-medicamentos', async (req, res) => {
       buscarPorDescricao(termoBusca)
     ]);
 
+    
     // Coletar produtos de princípio ativo
     if (resultadoPrincipioAtivo.encontrado) {
       produtosPrincipioAtivo = resultadoPrincipioAtivo.produtos;
