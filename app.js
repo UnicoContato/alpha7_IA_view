@@ -528,6 +528,7 @@ app.post('/api/buscar-medicamentos', async (req, res) => {
       produtos: produtos.map(p => ({
         id: p.id,
         codigo: p.codigo,
+        codigo_barras: p.codigobarras,
         descricao: p.descricao,
         principio_ativo: p.principioativo_nome || null,
         embalagem_id: p.embalagem_id,
