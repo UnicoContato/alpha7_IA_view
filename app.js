@@ -61,6 +61,7 @@ function extrairFormaFarmaceutica(termo) {
 // ============================================================
 
 
+
 async function buscarPorDescricao(termoBusca) {
   console.log(`\n[ETAPA 1] Buscando por DESCRIÇÃO: "${termoBusca}"`);
   
