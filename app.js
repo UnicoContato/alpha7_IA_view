@@ -55,6 +55,132 @@ function extrairFormaFarmaceutica(termo) {
   return { principioAtivoBusca, formaFarmaceutica, variacoesForma };
 }
 
+
+async function buscarPrecosEOfertas(embalagemIds, unidadeNegocioId) {
+  console.log(`\n[PREÇOS] Buscando preços e ofertas para ${embalagemIds.length} embalagens...`);
+  
+  if (embalagemIds.length === 0) {
+    return {};
+  }
+
+  try {
+    const placeholders = embalagemIds.map((_, idx) => `$${idx + 1}`).join(',');
+    
+    const query = `
+      SELECT 
+        em.id as embalagem_id,
+        
+        -- Preços da tabela EMBALAGEM (padrão geral)
+        em.precoreferencial as preco_referencial_geral,
+        em.precovenda as preco_venda_geral,
+        em.markup as markup_geral,
+        
+        -- Preços específicos da UNIDADE DE NEGÓCIO
+        peu.precoreferencial as preco_referencial_loja,
+        peu.precovenda as preco_venda_loja,
+        peu.markup as markup_loja,
+        peu.plugpharmaprecocontrolado,
+        
+        -- Melhor oferta ativa
+        mo.precooferta as preco_melhor_oferta,
+        mo.descontooferta as desconto_oferta_percentual,
+        mo.precounitariosemdesconto as preco_sem_desconto,
+        mo.precounitariocomdesconto as preco_com_desconto,
+        mo.vigenciainicio as oferta_inicio,
+        mo.vigenciatermino as oferta_fim,
+        
+        -- Caderno de oferta relacionado
+        co.nome as nome_caderno_oferta,
+        ico.tipooferta,
+        ico.leve,
+        ico.pague,
+        
+        -- Preço FINAL (lógica de prioridade)
+        CASE
+          WHEN mo.precooferta IS NOT NULL 
+            AND (mo.vigenciatermino IS NULL OR mo.vigenciatermino >= NOW())
+          THEN mo.precooferta
+          WHEN peu.precovenda IS NOT NULL 
+          THEN peu.precovenda
+          ELSE em.precovenda
+        END as preco_final_venda,
+        
+        -- Indicador de oferta ativa
+        CASE
+          WHEN mo.precooferta IS NOT NULL 
+            AND (mo.vigenciatermino IS NULL OR mo.vigenciatermino >= NOW())
+          THEN true
+          ELSE false
+        END as tem_oferta_ativa
+
+      FROM embalagem em
+      
+      LEFT JOIN precoembalagemunidadenegocio peu 
+        ON peu.embalagemid = em.id 
+        AND peu.unidadenegocioid = $${embalagemIds.length + 1}
+      
+      LEFT JOIN melhoroferta mo 
+        ON mo.embalagemid = em.id 
+        AND mo.unidadenegocioid = $${embalagemIds.length + 1}
+        AND (mo.vigenciatermino IS NULL OR mo.vigenciatermino >= NOW())
+      
+      LEFT JOIN itemcadernooferta ico 
+        ON ico.id = (
+          SELECT ico2.id 
+          FROM itemcadernooferta ico2
+          WHERE ico2.embalagemid = em.id 
+            AND ico2.cadernoofertaid = mo.cadernoofertaid
+          LIMIT 1
+        )
+      
+      LEFT JOIN cadernooferta co 
+        ON co.id = mo.cadernoofertaid
+      
+      WHERE em.id IN (${placeholders})
+    `;
+    
+    const params = [...embalagemIds, unidadeNegocioId];
+    const resultado = await pool.query(query, params);
+
+    const precosMap = {};
+    resultado.rows.forEach(row => {
+      precosMap[row.embalagem_id] = {
+        preco_referencial_geral: parseFloat(row.preco_referencial_geral) || null,
+        preco_venda_geral: parseFloat(row.preco_venda_geral) || null,
+        markup_geral: parseFloat(row.markup_geral) || null,
+        preco_referencial_loja: parseFloat(row.preco_referencial_loja) || null,
+        preco_venda_loja: parseFloat(row.preco_venda_loja) || null,
+        markup_loja: parseFloat(row.markup_loja) || null,
+        plugpharma_preco_controlado: parseFloat(row.plugpharmaprecocontrolado) || null,
+        preco_melhor_oferta: parseFloat(row.preco_melhor_oferta) || null,
+        desconto_oferta_percentual: parseFloat(row.desconto_oferta_percentual) || null,
+        preco_sem_desconto: parseFloat(row.preco_sem_desconto) || null,
+        preco_com_desconto: parseFloat(row.preco_com_desconto) || null,
+        oferta_inicio: row.oferta_inicio,
+        oferta_fim: row.oferta_fim,
+        nome_caderno_oferta: row.nome_caderno_oferta,
+        tipo_oferta: row.tipooferta,
+        leve: row.leve,
+        pague: row.pague,
+        preco_final_venda: parseFloat(row.preco_final_venda) || null,
+        tem_oferta_ativa: row.tem_oferta_ativa || false
+      };
+    });
+
+    console.log(`[PREÇOS] ✅ Encontrados preços para ${Object.keys(precosMap).length} embalagens`);
+    const comOferta = Object.values(precosMap).filter(p => p.tem_oferta_ativa).length;
+    if (comOferta > 0) {
+      console.log(`[PREÇOS] 🎯 ${comOferta} produto(s) com oferta ativa`);
+    }
+
+    return precosMap;
+
+  } catch (error) {
+    console.error(`[PREÇOS] ⚠️ Erro:`, error.message);
+    return {};
+  }
+}
+
 // ============================================================
 // ETAPA 1: BUSCAR POR DESCRIÇÃO (NOVA VERSÃO COM RANKING)
 // ============================================================
@@ -286,10 +412,17 @@ async function verificarDisponibilidade(produtos, unidadeNegocioId) {
       estoqueMap[row.embalagemid] = row.estoque_disponivel;
     });
 
-    // Adicionar informação de estoque aos produtos
+    // ✅ ADICIONAR ESTAS LINHAS:
+    const precosMap = await buscarPrecosEOfertas(embalagemIds, unidadeNegocioId);
+
+    // ✅ MODIFICAR O LOOP:
     produtos.forEach(produto => {
       produto.estoque_disponivel = estoqueMap[produto.embalagem_id] || 0;
       produto.tem_estoque = (estoqueMap[produto.embalagem_id] || 0) > 0;
+      
+      // ✅ ADICIONAR:
+      const precoInfo = precosMap[produto.embalagem_id] || {};
+      produto.precos = precoInfo;
     });
 
     const produtosComEstoque = produtos.filter(p => p.tem_estoque);
@@ -534,7 +667,34 @@ app.post('/api/buscar-medicamentos', async (req, res) => {
         embalagem_id: p.embalagem_id,
         estoque_disponivel: p.estoque_disponivel || 0,
         relevancia_score: p.relevancia_score || p.relevancia_descricao || null,
-        origem_busca: p.origem
+        origem_busca: p.origem,
+        
+        // ✅ ADICIONAR ESTES CAMPOS:
+        precos: {
+          // Preço final (já considera ofertas)
+          preco_venda: p.precos?.preco_final_venda || null,
+          
+          // Informações de oferta
+          tem_oferta_ativa: p.precos?.tem_oferta_ativa || false,
+          preco_sem_desconto: p.precos?.preco_sem_desconto || null,
+          preco_com_desconto: p.precos?.preco_com_desconto || null,
+          desconto_percentual: p.precos?.desconto_oferta_percentual || null,
+          nome_caderno_oferta: p.precos?.nome_caderno_oferta || null,
+          tipo_oferta: p.precos?.tipo_oferta || null,
+          leve: p.precos?.leve || null,
+          pague: p.precos?.pague || null,
+          oferta_inicio: p.precos?.oferta_inicio || null,
+          oferta_fim: p.precos?.oferta_fim || null,
+          
+          // Preços detalhados
+          preco_referencial_geral: p.precos?.preco_referencial_geral || null,
+          preco_venda_geral: p.precos?.preco_venda_geral || null,
+          preco_referencial_loja: p.precos?.preco_referencial_loja || null,
+          preco_venda_loja: p.precos?.preco_venda_loja || null,
+          markup_geral: p.precos?.markup_geral || null,
+          markup_loja: p.precos?.markup_loja || null,
+          plugpharma_preco_controlado: p.precos?.plugpharma_preco_controlado || null
+        }
       }))
     });
 
