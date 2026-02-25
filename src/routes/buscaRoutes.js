@@ -2,6 +2,7 @@ const express = require('express');
 const { buscarPorDescricao, buscarPorPrincipioAtivo, buscarPorPrincipioAtivoIds, verificarDisponibilidade } = require('../db/queries');
 const { enriquecerClassificacaoCanonica } = require('../db/classificacaoQueries');
 const { ordenarPorIA } = require('../services/aiService');
+const { analisarNecessidadeDeClarificacao } = require('../services/clarificacaoService');
 const { extrairFormaFarmaceutica } = require('../utils/searchUtils');
 
 const router = express.Router();
@@ -105,8 +106,13 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
       produtos = await enriquecerClassificacaoCanonica(produtos);
     }
 
+    const clarificacao = analisarNecessidadeDeClarificacao({
+      query: termoBusca,
+      produtos
+    });
+
     let ordenadoPorIA = false;
-    if (produtos.length > 0) {
+    if (produtos.length > 0 && !clarificacao.precisa_clarificar) {
       const resultadoIA = await ordenarPorIA(produtos, termoBusca);
       produtos = resultadoIA.produtos;
       ordenadoPorIA = resultadoIA.ordenado;
@@ -137,11 +143,13 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
       metadados: {
         metodo_busca: metodoBusca,
         ordenado_por_ia: ordenadoPorIA,
+        busca_ambigua: clarificacao.precisa_clarificar,
         total_produtos: produtos.length,
         unidade_negocio_id: unidadeNegocioId,
         classificacoes_disponiveis: classificacoesDisponiveis,
         classificacoes_nao_mapeadas: classificacoesNaoMapeadas
       },
+      clarificacao,
       produtos: produtos.map(p => ({
         id: p.id,
         codigo: p.codigo,
