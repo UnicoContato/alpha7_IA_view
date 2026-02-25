@@ -1,5 +1,6 @@
 const express = require('express');
 const { buscarPorDescricao, buscarPorPrincipioAtivo, verificarDisponibilidade } = require('../db/queries');
+const { enriquecerClassificacaoCanonica } = require('../db/classificacaoQueries');
 const { ordenarPorIA } = require('../services/aiService');
 const { extrairFormaFarmaceutica } = require('../utils/searchUtils');
 
@@ -81,6 +82,10 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
       console.log(`[INFO] Após verificação de estoque: ${produtos.length} produtos`);
     }
 
+    if (produtos.length > 0) {
+      produtos = await enriquecerClassificacaoCanonica(produtos);
+    }
+
     let ordenadoPorIA = false;
     if (produtos.length > 0) {
       const resultadoIA = await ordenarPorIA(produtos, termoBusca);
@@ -91,6 +96,7 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
     const metodoBusca = metodosUtilizados.length > 0
       ? metodosUtilizados.join(' + ')
       : 'nenhum método encontrou resultados';
+    const classificacoesDisponiveis = [...new Set(produtos.map(p => p.tipo_classificacao_canonica).filter(Boolean))];
 
     console.log(`\n========================================`);
     console.log(`[RESULTADO] ${produtos.length} produto(s) encontrado(s)`);
@@ -108,7 +114,8 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
         metodo_busca: metodoBusca,
         ordenado_por_ia: ordenadoPorIA,
         total_produtos: produtos.length,
-        unidade_negocio_id: unidadeNegocioId
+        unidade_negocio_id: unidadeNegocioId,
+        classificacoes_disponiveis: classificacoesDisponiveis
       },
       produtos: produtos.map(p => ({
         id: p.id,
@@ -116,6 +123,8 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
         codigo_barras: p.codigobarras,
         descricao: p.descricao,
         principio_ativo: p.principioativo_nome || null,
+        tipo_classificacao: p.tipo_classificacao_canonica || null,
+        classificacao_id_origem: p.classificacao_id_origem || null,
         embalagem_id: p.embalagem_id,
         estoque_disponivel: p.estoque_disponivel || 0,
         relevancia_score: p.relevancia_score || p.relevancia_descricao || null,

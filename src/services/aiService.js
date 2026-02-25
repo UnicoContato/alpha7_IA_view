@@ -27,6 +27,7 @@ async function ordenarPorIA(produtos, termoBusca) {
       index: idx,
       descricao: (p.descricao ?? "").substring(0, 150),
       principio_ativo: p.principioativo_nome ?? "",
+      tipo_classificacao: p.tipo_classificacao_canonica ?? "DESCONHECIDO",
       relevancia_sql: p.relevancia_descricao || 0
     }));
 
@@ -38,8 +39,9 @@ ${JSON.stringify(listaProdutos, null, 2)}
 Critérios de relevância (por prioridade):
 1. Correspondência exata do princípio ativo ou nome comercial
 2. Correspondência da forma farmacêutica
-3. Relevância SQL já calculada (relevancia_sql)
-4. Correspondência parcial de palavras-chave
+3. Classificação desejável para contexto farmacêutico (REFERENCIA/GENERICO/SIMILAR), sem descartar as demais
+4. Relevância SQL já calculada (relevancia_sql)
+5. Correspondência parcial de palavras-chave
 
 IMPORTANTE: 
 - Retorne APENAS um array JSON com os ${listaProdutos.length} índices ordenados
