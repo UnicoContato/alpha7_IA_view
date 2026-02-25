@@ -1,5 +1,5 @@
 const express = require('express');
-const { buscarPorDescricao, buscarPorPrincipioAtivo, verificarDisponibilidade } = require('../db/queries');
+const { buscarPorDescricao, buscarPorPrincipioAtivo, buscarPorPrincipioAtivoIds, verificarDisponibilidade } = require('../db/queries');
 const { enriquecerClassificacaoCanonica } = require('../db/classificacaoQueries');
 const { ordenarPorIA } = require('../services/aiService');
 const { extrairFormaFarmaceutica } = require('../utils/searchUtils');
@@ -50,6 +50,25 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
       metodosUtilizados.push(resultadoDescricao.metodo);
     }
 
+    const principioAtivoIdsDaDescricao = [...new Set(
+      produtosDescricao
+        .map(p => p.principioativo_id)
+        .filter(id => id !== null && id !== undefined)
+    )];
+
+    if (principioAtivoIdsDaDescricao.length > 0) {
+      const resultadoExpandidoPorPrincipio = await buscarPorPrincipioAtivoIds(
+        principioAtivoIdsDaDescricao.slice(0, 10),
+        formaFarmaceutica,
+        variacoesForma
+      );
+
+      if (resultadoExpandidoPorPrincipio.encontrado) {
+        produtosPrincipioAtivo = [...produtosPrincipioAtivo, ...resultadoExpandidoPorPrincipio.produtos];
+        metodosUtilizados.push(resultadoExpandidoPorPrincipio.metodo);
+      }
+    }
+
     const produtosMap = new Map();
 
     produtosPrincipioAtivo.forEach(p => {
@@ -97,6 +116,11 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
       ? metodosUtilizados.join(' + ')
       : 'nenhum método encontrou resultados';
     const classificacoesDisponiveis = [...new Set(produtos.map(p => p.tipo_classificacao_canonica).filter(Boolean))];
+    const classificacoesNaoMapeadas = [...new Set(
+      produtos
+        .filter(p => p.tipo_classificacao_canonica === 'DESCONHECIDO')
+        .map(p => `${p.classificacao_id_origem || 'sem_id'}:${p.classificacao_nome_origem || 'sem_nome'}`)
+    )];
 
     console.log(`\n========================================`);
     console.log(`[RESULTADO] ${produtos.length} produto(s) encontrado(s)`);
@@ -115,7 +139,8 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
         ordenado_por_ia: ordenadoPorIA,
         total_produtos: produtos.length,
         unidade_negocio_id: unidadeNegocioId,
-        classificacoes_disponiveis: classificacoesDisponiveis
+        classificacoes_disponiveis: classificacoesDisponiveis,
+        classificacoes_nao_mapeadas: classificacoesNaoMapeadas
       },
       produtos: produtos.map(p => ({
         id: p.id,
@@ -125,6 +150,7 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
         principio_ativo: p.principioativo_nome || null,
         tipo_classificacao: p.tipo_classificacao_canonica || null,
         classificacao_id_origem: p.classificacao_id_origem || null,
+        classificacao_nome_origem: p.classificacao_nome_origem || null,
         embalagem_id: p.embalagem_id,
         estoque_disponivel: p.estoque_disponivel || 0,
         relevancia_score: p.relevancia_score || p.relevancia_descricao || null,

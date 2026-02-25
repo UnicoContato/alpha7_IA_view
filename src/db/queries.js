@@ -311,6 +311,105 @@ async function buscarPorPrincipioAtivo(principioAtivo, formaFarmaceutica, variac
   }
 }
 
+async function buscarPorPrincipioAtivoIds(principioIds, formaFarmaceutica, variacoesForma) {
+  if (!Array.isArray(principioIds) || principioIds.length === 0) {
+    return {
+      encontrado: false,
+      produtos: [],
+      metodo: 'principio_ativo_por_ids'
+    };
+  }
+
+  console.log(`\n[ETAPA 2B] Expandindo por PRINCIPIO ATIVO IDs: ${principioIds.join(', ')}`);
+
+  try {
+    const principioPlaceholders = principioIds.map((_, idx) => `$${idx + 1}`).join(',');
+    let queryProdutos = `
+      SELECT 
+        p.id,
+        p.codigo,
+        p.descricao,
+        p.status,
+        p.registroms,
+        p.fabricanteid,
+        pa.id as principioativo_id,
+        pa.nome as principioativo_nome,
+        em.id as embalagem_id,
+        em.descricao as embalagem_descricao,
+        em.codigobarras
+      FROM produto p
+      INNER JOIN principioativo pa ON p.principioativoid = pa.id
+      INNER JOIN embalagem em ON em.produtoid = p.id
+      WHERE pa.id IN (${principioPlaceholders})
+        AND p.status = 'A'
+    `;
+
+    let params = [...principioIds];
+
+    if (formaFarmaceutica && variacoesForma.length > 0) {
+      const startIdx = principioIds.length + 1;
+      const formaPlaceholders = variacoesForma.map((_, idx) => `p.descricao ILIKE $${startIdx + idx}`).join(' OR ');
+      queryProdutos += ` AND (${formaPlaceholders})`;
+      params.push(...variacoesForma.map(v => `%${v}%`));
+      console.log(`[ETAPA 2B] Filtrando por formas: ${variacoesForma.join(', ')}`);
+    }
+
+    queryProdutos += ` ORDER BY p.descricao LIMIT 200`;
+
+    const resultadoProdutos = await pool.query(queryProdutos, params);
+
+    if (resultadoProdutos.rows.length === 0 && formaFarmaceutica) {
+      const querySemForma = `
+        SELECT 
+          p.id,
+          p.codigo,
+          p.descricao,
+          p.status,
+          p.registroms,
+          p.fabricanteid,
+          pa.id as principioativo_id,
+          pa.nome as principioativo_nome,
+          em.id as embalagem_id,
+          em.descricao as embalagem_descricao,
+          em.codigobarras
+        FROM produto p
+        INNER JOIN principioativo pa ON p.principioativoid = pa.id
+        INNER JOIN embalagem em ON em.produtoid = p.id
+        WHERE pa.id IN (${principioPlaceholders})
+          AND p.status = 'A'
+        ORDER BY p.descricao
+        LIMIT 200
+      `;
+
+      const resultadoSemForma = await pool.query(querySemForma, principioIds);
+      if (resultadoSemForma.rows.length > 0) {
+        console.log(`[ETAPA 2B] Encontrados ${resultadoSemForma.rows.length} produtos (sem forma)`);
+        return {
+          encontrado: true,
+          produtos: resultadoSemForma.rows,
+          metodo: 'principio_ativo_por_ids_sem_forma'
+        };
+      }
+    } else if (resultadoProdutos.rows.length > 0) {
+      console.log(`[ETAPA 2B] Encontrados ${resultadoProdutos.rows.length} produtos`);
+      return {
+        encontrado: true,
+        produtos: resultadoProdutos.rows,
+        metodo: 'principio_ativo_por_ids'
+      };
+    }
+
+    return {
+      encontrado: false,
+      produtos: [],
+      metodo: 'principio_ativo_por_ids'
+    };
+  } catch (error) {
+    console.error(`[ETAPA 2B] Erro:`, error.message);
+    throw error;
+  }
+}
+
 async function verificarDisponibilidade(produtos, unidadeNegocioId) {
   console.log(`\n[ETAPA 3] Verificando DISPONIBILIDADE de ${produtos.length} produtos...`);
 
@@ -363,5 +462,6 @@ module.exports = {
   buscarPrecosEOfertas,
   buscarPorDescricao,
   buscarPorPrincipioAtivo,
+  buscarPorPrincipioAtivoIds,
   verificarDisponibilidade
 };
