@@ -1,8 +1,7 @@
 const { formasFarmaceuticas } = require('../../similarity');
 
 const REGEX_CONCENTRACAO = /\b\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|ui)(?:\s*\/\s*(?:\d+(?:[.,]\d+)?\s*)?(?:ml|g|ui))?/gi;
-const REGEX_VOLUME = /\b\d+(?:[.,]\d+)?\s?(?:ml|g)\b/gi;
-const REGEX_QUANTIDADE = /\b\d+\s?(?:cp|cps|comp|comprimidos?|caps|capsulas?|drg|drageas?)\b/gi;
+const MAX_PERGUNTAS = 2;
 
 function normalizarTexto(valor) {
   return String(valor || '')
@@ -67,15 +66,11 @@ function extrairAtributosProduto(produto) {
   const descricao = produto?.descricao || '';
 
   const concentracoes = extrairMatches(descricao, REGEX_CONCENTRACAO);
-  const volumes = extrairMatches(descricao, REGEX_VOLUME);
-  const quantidades = extrairMatches(descricao, REGEX_QUANTIDADE);
   const formas = extrairFormas(descricao);
-  const apresentacoes = [...new Set([...volumes, ...quantidades])];
 
   return {
     concentracoes,
-    formas,
-    apresentacoes
+    formas
   };
 }
 
@@ -98,24 +93,34 @@ function resumoClarificacao(tipo, opcoes) {
   if (tipo === 'concentracao') {
     return {
       tipo,
+      label: 'Concentracao',
       pergunta: 'Encontrei mais de uma concentracao. Qual voce procura?',
       opcoes
     };
   }
 
-  if (tipo === 'forma_farmaceutica') {
-    return {
-      tipo,
-      pergunta: 'Encontrei mais de uma forma farmaceutica. Qual voce prefere?',
-      opcoes
-    };
-  }
-
   return {
-    tipo: 'apresentacao',
-    pergunta: 'Encontrei mais de uma apresentacao (volume/quantidade). Qual voce prefere?',
+    tipo: 'forma_farmaceutica',
+    label: 'Forma farmaceutica',
+    pergunta: 'Encontrei mais de uma forma farmaceutica. Qual voce prefere?',
     opcoes
   };
+}
+
+function montarPerguntaComposta(perguntas) {
+  if (perguntas.length === 1) {
+    return perguntas[0].pergunta;
+  }
+
+  const linhas = ['Para te indicar com precisao, preciso de 2 confirmacoes:'];
+  perguntas.forEach((pergunta, index) => {
+    linhas.push(`${index + 1}) ${pergunta.pergunta}`);
+    pergunta.opcoes.forEach(opcao => {
+      linhas.push(`- ${pergunta.label}: ${opcao}`);
+    });
+  });
+
+  return linhas.join('\n');
 }
 
 function analisarNecessidadeDeClarificacao({ query, produtos }) {
@@ -131,10 +136,6 @@ function analisarNecessidadeDeClarificacao({ query, produtos }) {
   const queryTexto = String(query || '');
   const queryConcentracoes = extrairMatches(queryTexto, REGEX_CONCENTRACAO);
   const queryFormas = extrairFormas(queryTexto);
-  const queryApresentacoes = [...new Set([
-    ...extrairMatches(queryTexto, REGEX_VOLUME),
-    ...extrairMatches(queryTexto, REGEX_QUANTIDADE)
-  ])];
 
   const produtosEnriquecidos = produtos.map(produto => ({
     ...produto,
@@ -143,26 +144,33 @@ function analisarNecessidadeDeClarificacao({ query, produtos }) {
 
   const concentracoes = contarOcorrencias(produtosEnriquecidos, p => p.atributos_busca.concentracoes);
   const formas = contarOcorrencias(produtosEnriquecidos, p => p.atributos_busca.formas);
-  const apresentacoes = contarOcorrencias(produtosEnriquecidos, p => p.atributos_busca.apresentacoes);
 
-  if (concentracoes.length > 1 && queryConcentracoes.length === 0) {
-    return {
-      precisa_clarificar: true,
-      ...resumoClarificacao('concentracao', concentracoes.slice(0, 5))
-    };
-  }
+  const perguntasPendentes = [];
 
   if (formas.length > 1 && queryFormas.length === 0) {
-    return {
-      precisa_clarificar: true,
-      ...resumoClarificacao('forma_farmaceutica', formas.slice(0, 5))
-    };
+    perguntasPendentes.push(resumoClarificacao('forma_farmaceutica', formas.slice(0, 5)));
   }
 
-  if (apresentacoes.length > 1 && queryApresentacoes.length === 0) {
+  if (concentracoes.length > 1 && queryConcentracoes.length === 0) {
+    perguntasPendentes.push(resumoClarificacao('concentracao', concentracoes.slice(0, 5)));
+  }
+
+  const perguntas = perguntasPendentes.slice(0, MAX_PERGUNTAS);
+  if (perguntas.length > 0) {
+    const opcoesCompostas = [];
+    perguntas.forEach(pergunta => {
+      pergunta.opcoes.forEach(opcao => {
+        opcoesCompostas.push(`${pergunta.label}: ${opcao}`);
+      });
+    });
+
     return {
       precisa_clarificar: true,
-      ...resumoClarificacao('apresentacao', apresentacoes.slice(0, 5))
+      tipo: perguntas[0].tipo,
+      pergunta: montarPerguntaComposta(perguntas),
+      opcoes: opcoesCompostas,
+      perguntas,
+      total_perguntas: perguntas.length
     };
   }
 
@@ -170,7 +178,9 @@ function analisarNecessidadeDeClarificacao({ query, produtos }) {
     precisa_clarificar: false,
     tipo: null,
     pergunta: null,
-    opcoes: []
+    opcoes: [],
+    perguntas: [],
+    total_perguntas: 0
   };
 }
 
