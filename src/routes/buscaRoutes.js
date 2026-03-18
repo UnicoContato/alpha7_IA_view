@@ -117,6 +117,7 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
     );
 
     let ordenadoPorIA = false;
+    console.log(`[INFO] Iniciando IA`);
     if (produtos.length > 0 ) {
       const resultadoIA = await ordenarPorIA(produtos, termoBusca);
       produtos = resultadoIA.produtos;
