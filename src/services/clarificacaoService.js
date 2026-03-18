@@ -2,6 +2,7 @@ const { formasFarmaceuticas } = require('../../similarity');
 
 const REGEX_CONCENTRACAO = /\b\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|ui)(?:\s*\/\s*(?:\d+(?:[.,]\d+)?\s*)?(?:ml|g|ui))?/gi;
 const MAX_PERGUNTAS = 2;
+const MAX_PRODUTOS_ANALISADOS = 12;
 
 function normalizarTexto(valor) {
   return String(valor || '')
@@ -123,13 +124,32 @@ function montarPerguntaComposta(perguntas) {
   return linhas.join('\n');
 }
 
+function scoreDeRelevancia(produto) {
+  const score = Number(produto?.relevancia_score ?? produto?.relevancia_descricao ?? 0);
+  return Number.isFinite(score) ? score : 0;
+}
+
+function selecionarProdutosParaClarificacao(produtos) {
+  const lista = Array.isArray(produtos) ? produtos : [];
+  const produtosComScore = lista.filter(produto => scoreDeRelevancia(produto) > 0);
+
+  if (produtosComScore.length >= 2) {
+    return produtosComScore.slice(0, MAX_PRODUTOS_ANALISADOS);
+  }
+
+  return lista.slice(0, MAX_PRODUTOS_ANALISADOS);
+}
+
 function analisarNecessidadeDeClarificacao({ query, produtos }) {
-  if (!Array.isArray(produtos) || produtos.length < 2) {
+  const produtosBase = selecionarProdutosParaClarificacao(produtos);
+
+  if (produtosBase.length < 2) {
     return {
       precisa_clarificar: false,
       tipo: null,
       pergunta: null,
-      opcoes: []
+      opcoes: [],
+      total_produtos_analisados: produtosBase.length
     };
   }
 
@@ -137,7 +157,7 @@ function analisarNecessidadeDeClarificacao({ query, produtos }) {
   const queryConcentracoes = extrairMatches(queryTexto, REGEX_CONCENTRACAO);
   const queryFormas = extrairFormas(queryTexto);
 
-  const produtosEnriquecidos = produtos.map(produto => ({
+  const produtosEnriquecidos = produtosBase.map(produto => ({
     ...produto,
     atributos_busca: extrairAtributosProduto(produto)
   }));
@@ -170,7 +190,8 @@ function analisarNecessidadeDeClarificacao({ query, produtos }) {
       pergunta: montarPerguntaComposta(perguntas),
       opcoes: opcoesCompostas,
       perguntas,
-      total_perguntas: perguntas.length
+      total_perguntas: perguntas.length,
+      total_produtos_analisados: produtosBase.length
     };
   }
 
@@ -180,7 +201,8 @@ function analisarNecessidadeDeClarificacao({ query, produtos }) {
     pergunta: null,
     opcoes: [],
     perguntas: [],
-    total_perguntas: 0
+    total_perguntas: 0,
+    total_produtos_analisados: produtosBase.length
   };
 }
 

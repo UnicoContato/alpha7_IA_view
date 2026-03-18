@@ -111,8 +111,13 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
       produtos
     });
 
+    console.log(
+      `[CLARIFICACAO] ${clarificacao.precisa_clarificar ? 'Necessaria' : 'Nao'} ` +
+      `| Produtos analisados: ${clarificacao.total_produtos_analisados || 0}`
+    );
+
     let ordenadoPorIA = false;
-    if (produtos.length > 0 && !clarificacao.precisa_clarificar) {
+    if (produtos.length > 0 ) {
       const resultadoIA = await ordenarPorIA(produtos, termoBusca);
       produtos = resultadoIA.produtos;
       ordenadoPorIA = resultadoIA.ordenado;
