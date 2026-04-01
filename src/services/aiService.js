@@ -181,6 +181,38 @@ function logDecisoesIA(produtos, decisoes, limite = 5) {
   }
 }
 
+function chaveProduto(produto) {
+  return `${produto?.id ?? 'sem_id'}:${produto?.embalagem_id ?? 'sem_emb'}`;
+}
+
+function prioridadeRelacao(produto) {
+  if (produto?.relacionado_busca === true) {
+    return 0;
+  }
+
+  if (produto?.relacionado_busca === null || produto?.relacionado_busca === undefined) {
+    return 1;
+  }
+
+  return 2;
+}
+
+function reordenarProdutosMarcados(produtos) {
+  return [...(Array.isArray(produtos) ? produtos : [])]
+    .sort((a, b) => prioridadeRelacao(a) - prioridadeRelacao(b));
+}
+
+function houveMudancaDeOrdem(produtosOriginais, produtosReordenados) {
+  const antes = Array.isArray(produtosOriginais) ? produtosOriginais.map(chaveProduto) : [];
+  const depois = Array.isArray(produtosReordenados) ? produtosReordenados.map(chaveProduto) : [];
+
+  if (antes.length !== depois.length) {
+    return true;
+  }
+
+  return antes.some((chave, idx) => chave !== depois[idx]);
+}
+
 function ehBuscaComposta(termoBusca) {
   return REGEX_TERMO_COMPOSTO.test(String(termoBusca || ''));
 }
@@ -358,12 +390,20 @@ async function ordenarPorIA(produtos, contextoBusca) {
 
   if (produtos.length <= 1) {
     console.log(`[ETAPA 4] ⚠️ Apenas ${produtos.length} produto(s) - marcacao trivial`);
+    const resultadoTrivial = await marcarProdutosComIA(produtos, contextoBusca);
+    const produtosMarcados = resultadoTrivial.produtosMarcados;
+    const filtrado = resultadoTrivial.rejeitados > 0;
+
     return {
-      produtos: produtos.map(produto => ({ ...produto, relacionado_busca: true })),
+      produtos: produtosMarcados,
       ordenado: false,
-      filtrado: false,
+      filtrado,
       avaliado: true,
-      estatisticasIA: { aprovados: produtos.length, rejeitados: 0, analisados: produtos.length }
+      estatisticasIA: {
+        aprovados: resultadoTrivial.aprovados,
+        rejeitados: resultadoTrivial.rejeitados,
+        analisados: produtosMarcados.length
+      }
     };
   }
 
@@ -373,12 +413,20 @@ async function ordenarPorIA(produtos, contextoBusca) {
 
     if (produtosParaIA.length <= 1) {
       console.log(`[ETAPA 4] ⚠️ Menos de 2 produtos relevantes para marcar com IA`);
+      const resultadoTrivial = await marcarProdutosComIA(produtos, contextoBusca);
+      const produtosMarcados = resultadoTrivial.produtosMarcados;
+      const filtrado = resultadoTrivial.rejeitados > 0;
+
       return {
-        produtos: produtos.map(produto => ({ ...produto, relacionado_busca: true })),
+        produtos: produtosMarcados,
         ordenado: false,
-        filtrado: false,
+        filtrado,
         avaliado: true,
-        estatisticasIA: { aprovados: produtos.length, rejeitados: 0, analisados: produtos.length }
+        estatisticasIA: {
+          aprovados: resultadoTrivial.aprovados,
+          rejeitados: resultadoTrivial.rejeitados,
+          analisados: produtosMarcados.length
+        }
       };
     }
 
@@ -401,7 +449,10 @@ async function ordenarPorIA(produtos, contextoBusca) {
       rejeitados += resultadoLote.rejeitados;
     }
 
-    const produtosComScore = produtosMarcados.map((produto, pos, lista) => ({
+    const filtrado = rejeitados > 0;
+    const produtosReordenados = reordenarProdutosMarcados(produtosMarcados);
+    const ordenado = houveMudancaDeOrdem(produtosMarcados, produtosReordenados);
+    const produtosComScore = produtosReordenados.map((produto, pos, lista) => ({
       ...produto,
       relevancia_score: produto.relacionado_busca === true
         ? lista.length - pos
@@ -411,12 +462,15 @@ async function ordenarPorIA(produtos, contextoBusca) {
     console.log(
       `[ETAPA 4] ✅ IA marcou ${aprovados} relacionado(s) e ${rejeitados} nao relacionado(s) em ${produtosParaIA.length} produto(s)`
     );
+    console.log(
+      `[ETAPA 4] Flags calculadas | ordenado=${ordenado ? 'sim' : 'nao'} | filtrado=${filtrado ? 'sim' : 'nao'}`
+    );
     logResumoProdutos('Produtos marcados pela IA', produtosComScore);
 
     return {
       produtos: produtosComScore,
-      ordenado: false,
-      filtrado: false,
+      ordenado,
+      filtrado,
       avaliado: true,
       estatisticasIA: { aprovados, rejeitados, analisados: produtosParaIA.length }
     };
