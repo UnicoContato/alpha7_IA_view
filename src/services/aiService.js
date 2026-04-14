@@ -1,10 +1,9 @@
 const axios = require('axios');
+const { classificarRelacaoBuscaDeterministica } = require('../utils/searchUtils');
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const MAX_PRODUTOS_IA = 20;
-const REGEX_TERMO_COMPOSTO = /\b(composto|composta|associado|associada|combinado|combinada|plus)\b/i;
-
 function scoreBase(produto) {
   const score = Number(produto?.relevancia_descricao ?? 0);
   return Number.isFinite(score) ? score : 0;
@@ -15,15 +14,6 @@ function compactarTexto(valor, limite = 120) {
     .replace(/\s+/g, ' ')
     .trim()
     .substring(0, limite);
-}
-
-function normalizarTexto(valor) {
-  return String(valor || '')
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9+\s/]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function descreverProdutoParaLog(produto) {
@@ -213,65 +203,40 @@ function houveMudancaDeOrdem(produtosOriginais, produtosReordenados) {
   return antes.some((chave, idx) => chave !== depois[idx]);
 }
 
-function ehBuscaComposta(termoBusca) {
-  return REGEX_TERMO_COMPOSTO.test(String(termoBusca || ''));
-}
-
-function produtoTemMultiplosPrincipios(produto) {
-  const principioAtivo = normalizarTexto(produto?.principioativo_nome);
-  if (!principioAtivo) {
-    return false;
-  }
-
-  return principioAtivo.includes('+') || /\b e \b/.test(principioAtivo);
-}
-
-function produtoCombinaComPrincipioSimples(produto, principioAtivoBusca, termoBusca) {
-  const principioBusca = normalizarTexto(principioAtivoBusca);
-  if (!principioBusca) {
-    return true;
-  }
-
-  const principioProduto = normalizarTexto(produto?.principioativo_nome);
-  const descricaoProduto = normalizarTexto(produto?.descricao);
-  const buscaComposta = ehBuscaComposta(termoBusca);
-
-  if (!principioProduto && !descricaoProduto) {
-    return true;
-  }
-
-  const contemPrincipioBusca = principioProduto.includes(principioBusca) || descricaoProduto.includes(principioBusca);
-  if (!contemPrincipioBusca) {
-    return false;
-  }
-
-  if (!buscaComposta && produtoTemMultiplosPrincipios(produto)) {
-    return false;
-  }
-
-  return true;
-}
-
 function aplicarRegrasDeterministicas(produto, contextoBusca) {
-  const { principioAtivoBusca, termoBusca } = contextoBusca || {};
-  const relacionadoAtual = produto?.relacionado_busca;
-
-  if (relacionadoAtual !== true) {
-    return produto;
-  }
-
-  if (!produtoCombinaComPrincipioSimples(produto, principioAtivoBusca, termoBusca)) {
-    console.log(
-      `[ETAPA 4] Override deterministico: produto marcado como nao relacionado ` +
-      `| motivo=principio_ativo_composto_ou_divergente | ${descreverProdutoParaLog(produto)}`
-    );
+  const regraDeterministica = classificarRelacaoBuscaDeterministica(produto, contextoBusca);
+  if (!regraDeterministica) {
     return {
       ...produto,
-      relacionado_busca: false
+      tipo_relacao_busca: produto?.tipo_relacao_busca || (
+        produto?.relacionado_busca === true
+          ? 'relacionado_ia'
+          : produto?.relacionado_busca === false
+            ? 'nao_relacionado_ia'
+            : null
+      ),
+      motivo_relacao_busca: produto?.motivo_relacao_busca || null
     };
   }
 
-  return produto;
+  const houveOverride = (
+    produto?.relacionado_busca !== regraDeterministica.relacionado_busca ||
+    produto?.tipo_relacao_busca !== regraDeterministica.tipo_relacao_busca
+  );
+
+  if (houveOverride) {
+    console.log(
+      `[ETAPA 4] Override deterministico: produto reclassificado ` +
+      `| motivo=${regraDeterministica.motivo_relacao_busca} ` +
+      `| relacionado=${regraDeterministica.relacionado_busca ? 'sim' : 'nao'} ` +
+      `| tipo=${regraDeterministica.tipo_relacao_busca} | ${descreverProdutoParaLog(produto)}`
+    );
+  }
+
+  return {
+    ...produto,
+    ...regraDeterministica
+  };
 }
 
 function aplicarFlagRelacaoBusca(produtos, decisoes, contextoBusca) {
@@ -286,22 +251,30 @@ function aplicarFlagRelacaoBusca(produtos, decisoes, contextoBusca) {
   });
 }
 
+function marcarProdutosSemIA(produtos, contextoBusca) {
+  return (produtos || []).map(produto => aplicarRegrasDeterministicas({
+    ...produto,
+    relacionado_busca: produto?.relacionado_busca ?? null
+  }, contextoBusca));
+}
+
+function resumirMarcacao(produtosMarcados) {
+  return {
+    aprovados: produtosMarcados.filter(produto => produto.relacionado_busca === true).length,
+    rejeitados: produtosMarcados.filter(produto => produto.relacionado_busca === false).length
+  };
+}
+
 async function marcarProdutosComIA(produtos, contextoBusca) {
   const termoBusca = contextoBusca?.termoBusca || '';
   if (!Array.isArray(produtos) || produtos.length <= 1) {
-    const produtosMarcados = (produtos || []).map(produto => ({
-      ...produto,
-      relacionado_busca: produtoCombinaComPrincipioSimples(
-        { ...produto, relacionado_busca: true },
-        contextoBusca?.principioAtivoBusca,
-        termoBusca
-      )
-    }));
+    const produtosMarcados = marcarProdutosSemIA(produtos, contextoBusca);
+    const resumo = resumirMarcacao(produtosMarcados);
 
     return {
       produtosMarcados,
-      aprovados: produtosMarcados.filter(produto => produto.relacionado_busca === true).length,
-      rejeitados: produtosMarcados.filter(produto => produto.relacionado_busca === false).length
+      aprovados: resumo.aprovados,
+      rejeitados: resumo.rejeitados
     };
   }
 
@@ -311,7 +284,11 @@ async function marcarProdutosComIA(produtos, contextoBusca) {
   const prompt = `Analise a busca farmacêutica "${termoBusca}" e marque se cada item tem relacao direta com a busca.
 
 Contexto extraido da busca:
-- principio_ativo: ${contextoBusca?.principioAtivoBusca || 'nao identificado'}
+- tipo_busca: ${contextoBusca?.tipoBusca || 'indefinido'}
+- termo_nuclear: ${contextoBusca?.termoNominalBusca || contextoBusca?.principioAtivoBusca || termoBusca}
+- principio_ativo: ${String(contextoBusca?.tipoBusca || '').startsWith('principio_ativo')
+    ? (contextoBusca?.principioAtivoBusca || 'nao identificado')
+    : 'nao se aplica'}
 - forma_farmaceutica: ${contextoBusca?.formaFarmaceutica || 'nao identificada'}
 
 Produtos (total: ${listaProdutos.length}):
@@ -327,6 +304,7 @@ Cada objeto possui:
 
 Marque ok=true apenas quando o produto tiver relacao direta com a busca.
 Marque ok=false quando o item for generico demais, vier de match fraco, ou contrariar algo explicito da busca como forma/concentracao/nome distintivo.
+Se tipo_busca=marca, itens com o nome buscado explicitamente na descricao sao relacionados; itens apenas do mesmo principio ativo, mas com outro nome comercial, nao sao relacionados diretos.
 Se a busca mencionar apenas um principio ativo simples, nao marque como relacionado um produto composto com outros principios ativos, a menos que a busca diga "composto" ou equivalente.
 
 IMPORTANTE:
@@ -378,13 +356,15 @@ async function ordenarPorIA(produtos, contextoBusca) {
   console.log(`\n[ETAPA 4] Marcando ${produtos.length} produtos por RELEVANCIA com IA...`);
 
   if (!OPENAI_API_KEY || OPENAI_API_KEY === 'sua-chave-aqui') {
-    console.log(`[ETAPA 4] ⚠️ IA nao configurada - retornando lista SQL sem marcacao`);
+    console.log(`[ETAPA 4] ⚠️ IA nao configurada - aplicando apenas regras deterministicas`);
+    const produtosMarcados = marcarProdutosSemIA(produtos, contextoBusca);
+    const resumo = resumirMarcacao(produtosMarcados);
     return {
-      produtos: produtos.map(produto => ({ ...produto, relacionado_busca: null })),
+      produtos: produtosMarcados,
       ordenado: false,
-      filtrado: false,
+      filtrado: resumo.rejeitados > 0,
       avaliado: false,
-      estatisticasIA: { aprovados: 0, rejeitados: 0, analisados: 0 }
+      estatisticasIA: { aprovados: resumo.aprovados, rejeitados: resumo.rejeitados, analisados: produtosMarcados.length }
     };
   }
 
@@ -476,13 +456,15 @@ async function ordenarPorIA(produtos, contextoBusca) {
     };
   } catch (error) {
     console.error(`[ETAPA 4] ⚠️ Erro na IA:`, error.message);
-    console.log(`[ETAPA 4] Usando lista SQL existente`);
+    console.log(`[ETAPA 4] Usando apenas regras deterministicas`);
+    const produtosMarcados = marcarProdutosSemIA(produtos, contextoBusca);
+    const resumo = resumirMarcacao(produtosMarcados);
     return {
-      produtos: produtos.map(produto => ({ ...produto, relacionado_busca: null })),
+      produtos: produtosMarcados,
       ordenado: false,
-      filtrado: false,
+      filtrado: resumo.rejeitados > 0,
       avaliado: false,
-      estatisticasIA: { aprovados: 0, rejeitados: 0, analisados: 0 }
+      estatisticasIA: { aprovados: resumo.aprovados, rejeitados: resumo.rejeitados, analisados: produtosMarcados.length }
     };
   }
 }

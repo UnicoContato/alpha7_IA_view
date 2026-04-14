@@ -3,7 +3,7 @@ const { buscarPorDescricao, buscarPorPrincipioAtivo, buscarPorPrincipioAtivoIds,
 const { enriquecerClassificacaoCanonica } = require('../db/classificacaoQueries');
 const { ordenarPorIA } = require('../services/aiService');
 const { analisarNecessidadeDeClarificacao } = require('../services/clarificacaoService');
-const { extrairFormaFarmaceutica } = require('../utils/searchUtils');
+const { classificarTipoBusca, extrairFormaFarmaceutica } = require('../utils/searchUtils');
 
 const router = express.Router();
 
@@ -108,6 +108,17 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
       logResumoProdutos('Resultado bruto por descricao', produtosDescricao);
     }
 
+    const tipoBusca = classificarTipoBusca({
+      termoBusca,
+      principioAtivoBusca,
+      produtosDescricao,
+      principiosEncontrados
+    });
+    const termoNominalBusca = principioAtivoBusca || termoBusca;
+
+    console.log(`[INFO] Tipo de busca classificado: "${tipoBusca}"`);
+    console.log(`[INFO] Termo nuclear da busca: "${termoNominalBusca}"`);
+
     const principioAtivoIdsDaDescricao = [...new Set(
       produtosDescricao
         .map(p => p.principioativo_id)
@@ -179,6 +190,8 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
       logResumoProdutos('Candidatos enviados para etapa de IA', produtos);
       const resultadoIA = await ordenarPorIA(produtos, {
         termoBusca,
+        termoNominalBusca,
+        tipoBusca,
         principioAtivoBusca,
         formaFarmaceutica
       });
@@ -217,10 +230,14 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
         .filter(p => p.tipo_classificacao_canonica === 'DESCONHECIDO')
         .map(p => `${p.classificacao_id_origem || 'sem_id'}:${p.classificacao_nome_origem || 'sem_nome'}`)
     )];
+    const produtosAlternativosMesmoPrincipioAtivo = produtos
+      .filter(p => p.tipo_relacao_busca === 'alternativa_mesmo_principio_ativo')
+      .length;
 
     console.log(`\n========================================`);
     console.log(`[RESULTADO] ${produtos.length} produto(s) encontrado(s)`);
     console.log(`[RESULTADO] Métodos: ${metodoBusca}`);
+    console.log(`[RESULTADO] Tipo de busca: ${tipoBusca}`);
     console.log(`[RESULTADO] Ordenado por IA: ${ordenadoPorIA ? 'Sim' : 'Não'}`);
     console.log(`[RESULTADO] Filtrado por IA: ${filtradoPorIA ? 'Sim' : 'Não'}`);
     console.log(`[RESULTADO] Avaliado por IA: ${avaliadoPorIA ? 'Sim' : 'Não'}`);
@@ -229,13 +246,17 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
     );
     logDistribuicao('Distribuicao final por origem', produtos, 'origem');
     logDistribuicao('Distribuicao final por classificacao', produtos, 'tipo_classificacao_canonica');
+    logDistribuicao('Distribuicao final por tipo relacao busca', produtos, 'tipo_relacao_busca');
     logResumoProdutos('Resultado final retornado', produtos);
     console.log(`========================================\n`);
 
     return res.status(200).json({
       busca: {
         termo_original: termoBusca,
-        principio_ativo_extraido: principioAtivoBusca !== termoBusca ? principioAtivoBusca : null,
+        tipo_busca: tipoBusca,
+        principio_ativo_extraido: String(tipoBusca || '').startsWith('principio_ativo')
+          ? (principioAtivoBusca || null)
+          : null,
         forma_farmaceutica: formaFarmaceutica
       },
       metadados: {
@@ -246,6 +267,7 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
         produtos_relacionados_busca_ia: estatisticasIA.aprovados,
         produtos_nao_relacionados_busca_ia: estatisticasIA.rejeitados,
         produtos_analisados_ia: estatisticasIA.analisados,
+        produtos_alternativos_mesmo_principio_ativo: produtosAlternativosMesmoPrincipioAtivo,
         busca_ambigua: clarificacao.precisa_clarificar,
         total_produtos: produtos.length,
         unidade_negocio_id: unidadeNegocioId,
@@ -266,6 +288,7 @@ router.post('/api/buscar-medicamentos', async (req, res) => {
         estoque_disponivel: p.estoque_disponivel || 0,
         relevancia_score: p.relevancia_score || p.relevancia_descricao || null,
         relacionado_busca: p.relacionado_busca ?? null,
+        tipo_relacao_busca: p.tipo_relacao_busca ?? null,
         origem_busca: p.origem,
         precos: {
           preco_venda: p.precos?.preco_final_venda || null,
